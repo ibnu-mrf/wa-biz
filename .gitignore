@@ -31,7 +31,13 @@ yarn-error.*
 *.pem
 
 # local env files
+.env
 .env*.local
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+!.env.example
 
 # typescript
 *.tsbuildinfo
@@ -39,3 +45,12 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# WhatsApp Staging Worker (Baileys Sessions & Credentials)
+server/.env
+server/.env*.local
+!server/.env.example
+server/sessions/
+server/auth_info/
+server/dist/
+
