@@ -11,6 +11,7 @@ import {
 } from 'react-native';
 import { supabase } from '../lib/supabase';
 import { COLORS, AppIcon } from '../theme';
+import { deleteTeamMemberClient } from '../lib/whatsappClient';
 
 // ==========================================
 // TIPE DATA TIM CUSTOMER SERVICE (SUPABASE)
@@ -38,6 +39,7 @@ export interface TeamMember {
   name: string; // alias untuk full_name agar kompatibel dengan UI
   fullName: string;
   email: string;
+  phone?: string;
   department: string;
   role: string;
   isActive: boolean;
@@ -54,6 +56,7 @@ export const INITIAL_TEAM_MEMBERS: TeamMember[] = [
     name: 'Ustadz H. Ahmad Dahlan, S.Pd.I',
     fullName: 'Ustadz H. Ahmad Dahlan, S.Pd.I',
     email: 'ahmad.dahlan@darululum-wabiz.sch.id',
+    phone: '081234567890',
     department: 'Supervisor',
     role: 'Supervisor',
     isActive: true,
@@ -65,6 +68,7 @@ export const INITIAL_TEAM_MEMBERS: TeamMember[] = [
     name: 'Siti Aisyah, S.Kom',
     fullName: 'Siti Aisyah, S.Kom',
     email: 'aisyah.psb@darululum-wabiz.sch.id',
+    phone: '085641886993',
     department: 'Pendaftaran / PSB',
     role: 'Customer Service',
     isActive: true,
@@ -212,11 +216,16 @@ export function TeamView({
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isDeactivateModalOpen, setIsDeactivateModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [activeMember, setActiveMember] = useState<TeamMember | null>(null);
+  const [memberToDelete, setMemberToDelete] = useState<TeamMember | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Form State
   const [formFullName, setFormFullName] = useState('');
   const [formEmail, setFormEmail] = useState('');
+  const [formPhone, setFormPhone] = useState('');
   const [formDept, setFormDept] = useState<string>('Layanan Pelanggan');
   const [formRole, setFormRole] = useState<string>('Customer Service');
   const [formIsActive, setFormIsActive] = useState<boolean>(true);
@@ -272,7 +281,7 @@ export function TeamView({
       try {
         const { data, error } = await supabase
           .from('team_members')
-          .select('id, organization_id, full_name, email, department, role, is_active, created_at, updated_at')
+          .select('id, organization_id, full_name, email, department, role, phone, is_active, created_at, updated_at')
           .eq('organization_id', targetOrgId)
           .order('created_at', { ascending: false });
 
@@ -286,6 +295,7 @@ export function TeamView({
             name: row.full_name,
             fullName: row.full_name,
             email: row.email || '',
+            phone: row.phone || '',
             department: row.department || 'Umum',
             role: row.role || 'Customer Service',
             isActive: Boolean(row.is_active),
@@ -319,7 +329,7 @@ export function TeamView({
       try {
         const { data, error } = await supabase
           .from('team_members')
-          .select('id, organization_id, full_name, email, department, role, is_active, created_at, updated_at')
+          .select('id, organization_id, full_name, email, department, role, phone, is_active, created_at, updated_at')
           .eq('organization_id', effectiveOrgId)
           .order('created_at', { ascending: false });
 
@@ -333,6 +343,7 @@ export function TeamView({
             name: row.full_name,
             fullName: row.full_name,
             email: row.email || '',
+            phone: row.phone || '',
             department: row.department || 'Umum',
             role: row.role || 'Customer Service',
             isActive: Boolean(row.is_active),
@@ -442,6 +453,7 @@ export function TeamView({
     setActiveMember(null);
     setFormFullName('');
     setFormEmail('');
+    setFormPhone('');
     setFormDept('Layanan Pelanggan');
     setFormRole('Customer Service');
     setFormIsActive(true);
@@ -462,6 +474,7 @@ export function TeamView({
     setActiveMember(member);
     setFormFullName(member.fullName);
     setFormEmail(member.email);
+    setFormPhone(member.phone || '');
     setFormDept(member.department);
     setFormRole(member.role);
     setFormIsActive(member.isActive);
@@ -497,7 +510,17 @@ export function TeamView({
       return;
     }
 
-    // 3. Validasi Duplikat Email di Tim Lokal
+    // 3. Validasi Nomor WhatsApp
+    const phoneTrimmed = formPhone.trim();
+    if (phoneTrimmed.length > 0) {
+      const cleanDigits = phoneTrimmed.replace(/\D/g, '');
+      if (cleanDigits.length < 9) {
+        setFormError('Nomor WhatsApp wajib minimal 9 digit angka (contoh: 085641886993).');
+        return;
+      }
+    }
+
+    // 4. Validasi Duplikat Email di Tim Lokal
     const isDuplicate = teamMembers.some((m) => {
       if (activeMember && m.id === activeMember.id) return false;
       return m.email.toLowerCase() === emailTrimmed.toLowerCase();
@@ -519,6 +542,7 @@ export function TeamView({
           .update({
             full_name: formFullName.trim(),
             email: emailTrimmed,
+            phone: phoneTrimmed || null,
             department: formDept,
             role: formRole,
             is_active: formIsActive,
@@ -542,6 +566,7 @@ export function TeamView({
                   name: formFullName.trim(),
                   fullName: formFullName.trim(),
                   email: emailTrimmed,
+                  phone: phoneTrimmed,
                   department: formDept,
                   role: formRole,
                   isActive: formIsActive,
@@ -562,11 +587,12 @@ export function TeamView({
             organization_id: effectiveOrgId,
             full_name: formFullName.trim(),
             email: emailTrimmed,
+            phone: phoneTrimmed || null,
             department: formDept,
             role: formRole,
             is_active: formIsActive,
           })
-          .select('id, organization_id, full_name, email, department, role, is_active, created_at, updated_at')
+          .select('id, organization_id, full_name, email, department, role, phone, is_active, created_at, updated_at')
           .single();
 
         if (insertError) {
@@ -582,6 +608,7 @@ export function TeamView({
             name: newRow.full_name,
             fullName: newRow.full_name,
             email: newRow.email || '',
+            phone: newRow.phone || '',
             department: newRow.department || 'Umum',
             role: newRow.role || 'Customer Service',
             isActive: Boolean(newRow.is_active),
@@ -675,6 +702,86 @@ export function TeamView({
       });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Buka Modal Konfirmasi Hapus Anggota
+  const handleOpenDeleteModal = (member: TeamMember) => {
+    if (userRole === 'member') {
+      setFeedbackMsg({
+        type: 'warning',
+        text: 'Akses dibatasi: Hanya Owner atau Admin organisasi yang berhak menghapus anggota tim.',
+      });
+      setTimeout(() => setFeedbackMsg(null), 4000);
+      return;
+    }
+    setMemberToDelete(member);
+    setDeleteError(null);
+    setIsDeleteModalOpen(true);
+  };
+
+  // Batal Hapus Anggota
+  const handleCancelDelete = () => {
+    if (isDeleting) return;
+    setIsDeleteModalOpen(false);
+    setMemberToDelete(null);
+    setDeleteError(null);
+  };
+
+  // Konfirmasi Eksekusi Hapus Anggota
+  const handleConfirmDelete = async () => {
+    if (!memberToDelete || isDeleting) return;
+    if (!memberToDelete.isDemo && !effectiveOrgId) {
+      setDeleteError('ID organisasi tidak ditemukan. Silakan muat ulang halaman.');
+      return;
+    }
+
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    const targetMember = memberToDelete;
+
+    try {
+      if (!targetMember.isDemo) {
+        // Data persisten: wajib dihapus melalui backend terautentikasi dengan validasi tenant
+        const clientRes = await deleteTeamMemberClient(targetMember.id, effectiveOrgId);
+        if (!clientRes.success) {
+          setDeleteError(clientRes.error || 'Gagal menghapus anggota tim melalui backend worker.');
+          setIsDeleting(false);
+          return;
+        }
+      }
+
+      // Hapus dari state lokal
+      setTeamMembers((prev) => prev.filter((m) => m.id !== targetMember.id));
+
+      // Jika modal detail sedang terbuka untuk anggota ini, tutup modal detail
+      if (activeMember && activeMember.id === targetMember.id) {
+        setIsDetailModalOpen(false);
+        setActiveMember(null);
+      }
+
+      // Tutup modal konfirmasi hapus dan reset target
+      setIsDeleteModalOpen(false);
+      setMemberToDelete(null);
+
+      // Tampilkan feedback notifikasi sukses yang tidak menghalangi pengguna
+      setFeedbackMsg({
+        type: 'success',
+        text: `Anggota tim "${targetMember.fullName}" berhasil dihapus dari organisasi.`,
+      });
+      setTimeout(() => setFeedbackMsg(null), 4000);
+
+      // Sinkronisasi data terbaru secara silent jika online
+      if (!targetMember.isDemo && effectiveOrgId) {
+        fetchTeamMembers(effectiveOrgId);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Delete Team Member] Exception:', msg);
+      setDeleteError(translateTeamError(msg));
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -985,12 +1092,12 @@ export function TeamView({
         /* TABEL DESKTOP */
         <View style={styles.tableWrapper}>
           <View style={styles.tableHeadRow}>
-            <Text style={[styles.thCell, { flex: 2.4 }]}>Nama Anggota</Text>
-            <Text style={[styles.thCell, { flex: 2.2 }]}>Email</Text>
-            <Text style={[styles.thCell, { flex: 1.8 }]}>Departemen</Text>
+            <Text style={[styles.thCell, { flex: 2.2 }]}>Nama Anggota</Text>
+            <Text style={[styles.thCell, { flex: 2.0 }]}>Email</Text>
+            <Text style={[styles.thCell, { flex: 1.6 }]}>Departemen</Text>
             <Text style={[styles.thCell, { flex: 1.4 }]}>Peran</Text>
-            <Text style={[styles.thCell, { flex: 1.4 }]}>Status</Text>
-            <Text style={[styles.thCell, { flex: 1.6, textAlign: 'right' }]}>Aksi</Text>
+            <Text style={[styles.thCell, { flex: 1.3 }]}>Status</Text>
+            <Text style={[styles.thCell, { flex: 1.9, textAlign: 'right' }]}>Aksi</Text>
           </View>
 
           {filteredMembers.map((member, index) => {
@@ -1003,7 +1110,7 @@ export function TeamView({
                 ]}
               >
                 {/* Kolom 1: Nama & Avatar */}
-                <View style={[styles.tdCell, { flex: 2.4, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+                <View style={[styles.tdCell, { flex: 2.2, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
                   <View style={[styles.avatarCircle, { backgroundColor: getAvatarBg(member.fullName) }]}>
                     <Text style={styles.avatarText}>{getInitials(member.fullName)}</Text>
                   </View>
@@ -1017,15 +1124,20 @@ export function TeamView({
                   </View>
                 </View>
 
-                {/* Kolom 2: Email */}
-                <View style={[styles.tdCell, { flex: 2.2 }]}>
+                {/* Kolom 2: Email & WhatsApp */}
+                <View style={[styles.tdCell, { flex: 2.0 }]}>
                   <Text style={styles.emailText} numberOfLines={1}>
                     {member.email ? member.email : 'Belum ada email'}
                   </Text>
+                  {member.phone ? (
+                    <Text style={{ fontSize: 10, color: '#16A36A', marginTop: 2, fontWeight: '600' }} numberOfLines={1}>
+                      WA: +{member.phone}
+                    </Text>
+                  ) : null}
                 </View>
 
                 {/* Kolom 3: Departemen */}
-                <View style={[styles.tdCell, { flex: 1.8 }]}>
+                <View style={[styles.tdCell, { flex: 1.6 }]}>
                   <CsDepartmentBadge department={member.department} />
                 </View>
 
@@ -1035,12 +1147,12 @@ export function TeamView({
                 </View>
 
                 {/* Kolom 5: Status */}
-                <View style={[styles.tdCell, { flex: 1.4 }]}>
+                <View style={[styles.tdCell, { flex: 1.3 }]}>
                   <CsStatusBadge isActive={member.isActive} />
                 </View>
 
                 {/* Kolom 6: Aksi */}
-                <View style={[styles.tdCell, { flex: 1.6, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }]}>
+                <View style={[styles.tdCell, { flex: 1.9, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }]}>
                   <TouchableOpacity
                     style={styles.actionIconBtn}
                     onPress={() => {
@@ -1073,6 +1185,14 @@ export function TeamView({
                       size={13}
                       color={member.isActive ? '#DC2626' : '#047857'}
                     />
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.actionIconBtn, styles.actionIconBtnDanger]}
+                    onPress={() => handleOpenDeleteModal(member)}
+                    accessibilityLabel="Hapus Anggota"
+                  >
+                    <AppIcon name="trash" size={13} color="#DC2626" />
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1109,6 +1229,13 @@ export function TeamView({
                   <View style={styles.mobileInfoRow}>
                     <Text style={styles.mobileInfoLabel}>Email:</Text>
                     <Text style={styles.emailText}>{member.email || 'Belum ada email'}</Text>
+                  </View>
+
+                  <View style={styles.mobileInfoRow}>
+                    <Text style={styles.mobileInfoLabel}>WhatsApp:</Text>
+                    <Text style={{ fontSize: 11, color: member.phone ? '#16A36A' : COLORS.textMuted, fontWeight: '600' }}>
+                      {member.phone ? `+${member.phone}` : 'Belum diisi'}
+                    </Text>
                   </View>
                 </View>
 
@@ -1151,6 +1278,14 @@ export function TeamView({
                     >
                       {member.isActive ? 'Nonaktifkan' : 'Aktifkan'}
                     </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.mobileBtnSecondary, styles.mobileBtnDanger]}
+                    onPress={() => handleOpenDeleteModal(member)}
+                  >
+                    <AppIcon name="trash" size={13} color="#DC2626" />
+                    <Text style={styles.mobileBtnDangerText}>Hapus</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1237,6 +1372,24 @@ export function TeamView({
                   placeholderTextColor={COLORS.textMuted}
                   keyboardType="email-address"
                   autoCapitalize="none"
+                />
+              </View>
+
+              {/* Nomor WhatsApp CS */}
+              <View>
+                <Text style={styles.formLabel}>
+                  Nomor WhatsApp Petugas {formDept === 'Pendaftaran / PSB' ? <Text style={styles.requiredStar}>* (Wajib untuk Handoff PSB)</Text> : '(Opsional)'}
+                </Text>
+                <TextInput
+                  style={styles.formInput}
+                  value={formPhone}
+                  onChangeText={(val) => {
+                    setFormPhone(val);
+                    if (formError) setFormError(null);
+                  }}
+                  placeholder="Contoh: 085641886993 atau +6285641886993"
+                  placeholderTextColor={COLORS.textMuted}
+                  keyboardType="phone-pad"
                 />
               </View>
 
@@ -1403,6 +1556,13 @@ export function TeamView({
                 </View>
 
                 <View style={styles.detailRow}>
+                  <Text style={styles.detailLabel}>Nomor WhatsApp:</Text>
+                  <Text style={[styles.detailValue, { color: activeMember.phone ? '#16A36A' : COLORS.textMuted, fontWeight: '700' }]}>
+                    {activeMember.phone ? `+${activeMember.phone}` : 'Belum diisi'}
+                  </Text>
+                </View>
+
+                <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Peran Organisasi:</Text>
                   <CsRoleBadge role={activeMember.role} />
                 </View>
@@ -1426,6 +1586,16 @@ export function TeamView({
                   onPress={() => setIsDetailModalOpen(false)}
                 >
                   <Text style={styles.btnSecondaryText}>Tutup</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.btnActionDelete}
+                  onPress={() => {
+                    handleOpenDeleteModal(activeMember);
+                  }}
+                >
+                  <AppIcon name="trash" size={14} color="#DC2626" />
+                  <Text style={styles.btnActionDeleteText}>Hapus</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -1532,6 +1702,117 @@ export function TeamView({
                     <Text style={styles.btnPrimaryText}>
                       {activeMember.isActive ? 'Ya, Nonaktifkan' : 'Ya, Aktifkan'}
                     </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </View>
+      </Modal>
+
+      {/* ========================================== */}
+      {/* 9. MODAL KONFIRMASI HAPUS ANGGOTA TIM      */}
+      {/* ========================================== */}
+      <Modal
+        visible={isDeleteModalOpen && memberToDelete !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={handleCancelDelete}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={handleCancelDelete}
+          />
+
+          {memberToDelete && (
+            <View style={[styles.modalCard, { maxWidth: 460 }]}>
+              <View style={styles.modalHeader}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                  <View style={[styles.iconCircleWarning, styles.bgDangerLight]}>
+                    <AppIcon name="trash" size={18} color="#DC2626" />
+                  </View>
+                  <View>
+                    <Text style={styles.modalTitle}>Hapus Anggota Tim CS?</Text>
+                    <Text style={styles.modalSubtitle}>Konfirmasi penghapusan anggota tim organisasi</Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.modalCloseBtn}
+                  onPress={handleCancelDelete}
+                  disabled={isDeleting}
+                >
+                  <AppIcon name="close" size={16} color={COLORS.textSecondary} />
+                </TouchableOpacity>
+              </View>
+
+              {/* Kartu Informasi Anggota yang Akan Dihapus */}
+              <View style={styles.deleteMemberCard}>
+                <View
+                  style={[
+                    styles.avatarCircle,
+                    { backgroundColor: getAvatarBg(memberToDelete.fullName), width: 38, height: 38, borderRadius: 19 },
+                  ]}
+                >
+                  <Text style={styles.avatarText}>{getInitials(memberToDelete.fullName)}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.deleteMemberName} numberOfLines={1}>
+                    {memberToDelete.fullName}
+                  </Text>
+                  <Text style={styles.deleteMemberEmail} numberOfLines={1}>
+                    {memberToDelete.email || 'Email belum diisi'}
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                    <CsDepartmentBadge department={memberToDelete.department} />
+                    <CsRoleBadge role={memberToDelete.role} />
+                  </View>
+                </View>
+              </View>
+
+              {/* Disclaimer / Catatan Keamanan */}
+              <View style={styles.deleteDisclaimerBox}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                  <AppIcon name="alert" size={14} color="#D97706" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.deleteDisclaimerTitle}>Cakupan Penghapusan:</Text>
+                    <Text style={styles.deleteDisclaimerText}>
+                      • Menghapus profil petugas ini dari daftar tim CS organisasi.{'\n'}
+                      • Tindakan ini <Text style={{ fontWeight: '700' }}>TIDAK</Text> menghapus riwayat percakapan pelanggan yang pernah dialokasikan ke petugas ini (seluruh pesan dan data kontak tetap aman tersimpan).
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {deleteError && (
+                <View style={styles.formErrorBox}>
+                  <AppIcon name="alert" size={14} color="#DC2626" />
+                  <Text style={styles.formErrorText}>{deleteError}</Text>
+                </View>
+              )}
+
+              <View style={styles.modalFooter}>
+                <TouchableOpacity
+                  style={styles.btnCancel}
+                  onPress={handleCancelDelete}
+                  disabled={isDeleting}
+                >
+                  <Text style={styles.btnCancelText}>Batal</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.btnPrimary, styles.btnDanger, isDeleting && styles.btnPrimaryDisabled]}
+                  onPress={handleConfirmDelete}
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={styles.btnPrimaryText}>Menghapus...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.btnPrimaryText}>Ya, Hapus Anggota</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -2454,5 +2735,64 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     lineHeight: 19,
     marginVertical: 12,
+  },
+
+  // HAPUS ANGGOTA TIM
+  btnActionDelete: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    backgroundColor: '#FEF2F2',
+  },
+  btnActionDeleteText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
+  },
+  deleteMemberCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 10,
+    marginBottom: 12,
+  },
+  deleteMemberName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  deleteMemberEmail: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  deleteDisclaimerBox: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 10,
+  },
+  deleteDisclaimerTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#92400E',
+    marginBottom: 4,
+  },
+  deleteDisclaimerText: {
+    fontSize: 11,
+    color: '#78350F',
+    lineHeight: 16,
   },
 });

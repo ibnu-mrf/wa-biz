@@ -13,6 +13,11 @@ import {
 import { supabase } from '../lib/supabase';
 import { COLORS, AppIcon } from '../theme';
 import { Contact } from './ContactsView';
+import {
+  sendWhatsAppMessage,
+  retryRegistrationHandoffClient,
+  deleteConversationClient,
+} from '../lib/whatsappClient';
 
 // ==========================================
 // TIPE DATA PERCAKAPAN & PESAN SUPABASE
@@ -48,6 +53,13 @@ export interface Conversation {
   tag: string;
   messages: ChatMessage[];
   isDemo?: boolean;
+  handoffStatus?: 'none' | 'pending' | 'sent' | 'failed';
+  handoffDepartment?: string;
+  handoffNotifiedAt?: string;
+  handoffSummary?: string;
+  handoffError?: string;
+  handoffCsPhone?: string;
+  assignedToName?: string;
 }
 
 // ==========================================
@@ -65,6 +77,7 @@ export const INITIAL_CONVERSATIONS: Conversation[] = [
     lastTime: '10:42',
     lastSnippet: 'Boleh, tolong hubungkan saya dengan sales atau CS manusia ya kak.',
     tag: 'Prospek Enterprise',
+    isDemo: true,
     messages: [
       {
         id: 'm1_1',
@@ -107,6 +120,7 @@ export const INITIAL_CONVERSATIONS: Conversation[] = [
     lastTime: '09:15',
     lastSnippet: 'Selamat pagi Kak Rina! Layanan kami buka Senin - Jumat pukul 08.00 - 18.00 WIB.',
     tag: 'Info Operasional',
+    isDemo: true,
     messages: [
       {
         id: 'm2_1',
@@ -184,6 +198,24 @@ export function translateConversationError(errMsg: string): string {
     return 'Gagal terhubung ke database Supabase. Periksa koneksi internet Anda.';
   }
   return errMsg || 'Terjadi kendala saat memproses percakapan.';
+}
+
+/**
+ * Memformat nomor telepon dengan masking karakter tengah untuk privasi.
+ * Contoh: '+62 812-9821-4433' -> '+6281****4433'
+ */
+export function maskPhone(phone: string | null | undefined): string {
+  if (!phone) return '-';
+  const clean = String(phone).trim();
+  const digits = clean.replace(/\D/g, '');
+  if (digits.length <= 4) {
+    return clean;
+  }
+  const prefix = clean.startsWith('+') ? '+' : '';
+  if (digits.length <= 8) {
+    return prefix + digits.slice(0, 3) + '****' + digits.slice(-2);
+  }
+  return prefix + digits.slice(0, 4) + '****' + digits.slice(-4);
 }
 
 // Helper mapping pesan Supabase ke ChatMessage
@@ -269,6 +301,8 @@ export interface ConversationsViewProps {
   setSelectedId?: React.Dispatch<React.SetStateAction<string | null>>;
   isDesktop: boolean;
   onNavigate?: (page: NavDestination) => void;
+  onConversationDeleted?: (deletedConv: Conversation) => void;
+  onConversationUpdated?: () => void;
 }
 
 // ==========================================
@@ -285,6 +319,8 @@ export function ConversationsView({
   setSelectedId: externalSetSelectedId,
   isDesktop,
   onNavigate,
+  onConversationDeleted,
+  onConversationUpdated,
 }: ConversationsViewProps) {
   const [internalConversations, setInternalConversations] = useState<Conversation[]>([]);
   const conversations = externalConversations ?? internalConversations;
@@ -304,6 +340,11 @@ export function ConversationsView({
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null);
+  const [sendSuccessNotice, setSendSuccessNotice] = useState<string | null>(null);
+  const [isRetryingHandoff, setIsRetryingHandoff] = useState<boolean>(false);
+  const [retryHandoffError, setRetryHandoffError] = useState<string | null>(null);
+  const [retryHandoffNotice, setRetryHandoffNotice] = useState<string | null>(null);
 
   // Filters & Search
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
@@ -320,18 +361,30 @@ export function ConversationsView({
   const [createConvError, setCreateConvError] = useState<string | null>(null);
   const [isSubmittingNewConv, setIsSubmittingNewConv] = useState(false);
 
+  // Modal Konfirmasi Hapus Percakapan
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [conversationToDelete, setConversationToDelete] = useState<Conversation | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteSuccessNotice, setDeleteSuccessNotice] = useState<string | null>(null);
+  const hasUserClosedDetailRef = React.useRef(false);
+
   // Muat Daftar Percakapan dari Supabase public.conversations
   const fetchConversations = useCallback(
-    async (orgId?: string) => {
+    async (orgId?: string, silent = false) => {
       const targetOrgId = orgId || effectiveOrgId;
       if (!targetOrgId) {
-        setIsLoadingConversations(false);
-        setFetchError('Organisasi belum dipilih atau tidak aktif. Silakan pilih workspace Anda.');
+        if (!silent) {
+          setIsLoadingConversations(false);
+          setFetchError('Organisasi belum dipilih atau tidak aktif. Silakan pilih workspace Anda.');
+        }
         return;
       }
 
-      setIsLoadingConversations(true);
-      setFetchError(null);
+      if (!silent) {
+        setIsLoadingConversations(true);
+        setFetchError(null);
+      }
 
       try {
         const { data: convData, error: convError } = await supabase
@@ -342,6 +395,12 @@ export function ConversationsView({
             contact_id,
             assigned_to,
             status,
+            handoff_status,
+            handoff_department,
+            handoff_notified_at,
+            handoff_summary,
+            handoff_error,
+            handoff_cs_phone,
             last_message_at,
             created_at,
             updated_at,
@@ -351,6 +410,12 @@ export function ConversationsView({
               phone,
               email,
               labels
+            ),
+            team_members (
+              id,
+              full_name,
+              department,
+              phone
             )
           `)
           .eq('organization_id', targetOrgId)
@@ -358,7 +423,7 @@ export function ConversationsView({
 
         if (convError) {
           console.error('Error fetching conversations:', convError.message);
-          setFetchError(translateConversationError(convError.message));
+          if (!silent) setFetchError(translateConversationError(convError.message));
           return;
         }
 
@@ -380,213 +445,119 @@ export function ConversationsView({
             }
           }
 
-          const mapped: Conversation[] = convData.map((row) => {
-            const contactObj = Array.isArray(row.contacts) ? row.contacts[0] : row.contacts;
-            const name = contactObj?.name || 'Kontak Tanpa Nama';
-            const phone = contactObj?.phone || '-';
-            const avatarText = getInitials(name);
-            const avatarBg = getAvatarBg(name);
+          setConversations((prev) => {
+            const mapped: Conversation[] = convData.map((row) => {
+              const contactObj = Array.isArray(row.contacts) ? row.contacts[0] : row.contacts;
+              const name = contactObj?.name || 'Kontak Tanpa Nama';
+              const phone = contactObj?.phone || '-';
+              const avatarText = getInitials(name);
+              const avatarBg = getAvatarBg(name);
 
-            const status = normalizeConversationStatus(row.status);
+              const status = normalizeConversationStatus(row.status);
 
-            const latestMsg = latestMsgMap[row.id];
-            const displayTime = latestMsg?.created_at
-              ? new Date(latestMsg.created_at).toLocaleTimeString('id-ID', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })
-              : row.last_message_at
-              ? new Date(row.last_message_at).toLocaleTimeString('id-ID', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })
-              : '';
+              const latestMsg = latestMsgMap[row.id];
+              const displayTime = latestMsg?.created_at
+                ? new Date(latestMsg.created_at).toLocaleTimeString('id-ID', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : row.last_message_at
+                ? new Date(row.last_message_at).toLocaleTimeString('id-ID', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : '';
 
-            const displaySnippet = latestMsg?.body || 'Belum ada pesan';
-            const tag = (Array.isArray(contactObj?.labels) && contactObj.labels[0]) || 'WhatsApp Kontak';
+              const displaySnippet = latestMsg?.body || 'Belum ada pesan';
+              const tag = (Array.isArray(contactObj?.labels) && contactObj.labels[0]) || 'WhatsApp Kontak';
 
-            return {
-              id: row.id,
-              organizationId: row.organization_id,
-              contactId: row.contact_id,
-              contactName: name,
-              contactPhone: phone,
-              name,
-              phone,
-              avatarText,
-              avatarBg,
-              status,
-              unreadCount: 0,
-              lastTime: displayTime,
-              lastSnippet: displaySnippet,
-              tag,
-              messages: [],
-              isDemo: false,
-            };
+              // Pertahankan riwayat pesan yang sudah dimuat sebelumnya
+              const existingConv = prev.find((c) => c.id === row.id);
+              const existingMessages = existingConv?.messages || [];
+              const teamMemberObj = Array.isArray(row.team_members) ? row.team_members[0] : row.team_members;
+              const assignedToName = teamMemberObj?.full_name;
+
+              return {
+                id: row.id,
+                organizationId: row.organization_id,
+                contactId: row.contact_id,
+                contactName: name,
+                contactPhone: phone,
+                name,
+                phone,
+                avatarText,
+                avatarBg,
+                status,
+                unreadCount: existingConv ? existingConv.unreadCount : 0,
+                lastTime: displayTime,
+                lastSnippet: displaySnippet,
+                tag,
+                messages: existingMessages,
+                isDemo: false,
+                handoffStatus: row.handoff_status || 'none',
+                handoffDepartment: row.handoff_department || teamMemberObj?.department,
+                handoffNotifiedAt: row.handoff_notified_at
+                  ? new Date(row.handoff_notified_at).toLocaleTimeString('id-ID', {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })
+                  : undefined,
+                handoffSummary: row.handoff_summary || undefined,
+                handoffError: row.handoff_error || undefined,
+                handoffCsPhone: row.handoff_cs_phone || teamMemberObj?.phone,
+                assignedToName,
+              };
+            });
+
+            return mapped;
           });
-
-          setConversations(mapped);
 
           // Pada desktop jika belum ada percakapan terpilih, pilih percakapan pertama
-          if (isDesktop && mapped.length > 0 && !selectedId) {
-            setSelectedId(mapped[0].id);
+          if (isDesktop && convData.length > 0) {
+            setSelectedId((prev) => prev || convData[0].id);
           }
         }
       } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : '';
-        setFetchError(translateConversationError(msg));
-      } finally {
-        setIsLoadingConversations(false);
-      }
-    },
-    [effectiveOrgId, isDesktop, selectedId, setConversations, setSelectedId]
-  );
-
-  // Inisialisasi muat percakapan ketika ID organisasi tersedia
-  useEffect(() => {
-    let ignore = false;
-    if (!effectiveOrgId) return;
-
-    const loadData = async () => {
-      try {
-        const { data: convData, error: convError } = await supabase
-          .from('conversations')
-          .select(`
-            id,
-            organization_id,
-            contact_id,
-            assigned_to,
-            status,
-            last_message_at,
-            created_at,
-            updated_at,
-            contacts (
-              id,
-              name,
-              phone,
-              email,
-              labels
-            )
-          `)
-          .eq('organization_id', effectiveOrgId)
-          .order('last_message_at', { ascending: false });
-
-        if (ignore) return;
-        if (convError) {
-          setFetchError(translateConversationError(convError.message));
-        } else if (convData) {
-          const { data: recentMsgs } = await supabase
-            .from('messages')
-            .select('id, conversation_id, body, created_at, sender_type')
-            .eq('organization_id', effectiveOrgId)
-            .order('created_at', { ascending: false })
-            .limit(100);
-
-          if (ignore) return;
-
-          const latestMsgMap: Record<string, { body: string; created_at: string }> = {};
-          if (recentMsgs) {
-            for (const m of recentMsgs) {
-              if (!latestMsgMap[m.conversation_id]) {
-                latestMsgMap[m.conversation_id] = { body: m.body, created_at: m.created_at };
-              }
-            }
-          }
-
-          const mapped: Conversation[] = convData.map((row) => {
-            const contactObj = Array.isArray(row.contacts) ? row.contacts[0] : row.contacts;
-            const name = contactObj?.name || 'Kontak Tanpa Nama';
-            const phone = contactObj?.phone || '-';
-            const avatarText = getInitials(name);
-            const avatarBg = getAvatarBg(name);
-
-            const status = normalizeConversationStatus(row.status);
-
-            const latestMsg = latestMsgMap[row.id];
-            const displayTime = latestMsg?.created_at
-              ? new Date(latestMsg.created_at).toLocaleTimeString('id-ID', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })
-              : row.last_message_at
-              ? new Date(row.last_message_at).toLocaleTimeString('id-ID', {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })
-              : '';
-
-            const displaySnippet = latestMsg?.body || 'Belum ada pesan';
-            const tag = (Array.isArray(contactObj?.labels) && contactObj.labels[0]) || 'WhatsApp Kontak';
-
-            return {
-              id: row.id,
-              organizationId: row.organization_id,
-              contactId: row.contact_id,
-              contactName: name,
-              contactPhone: phone,
-              name,
-              phone,
-              avatarText,
-              avatarBg,
-              status,
-              unreadCount: 0,
-              lastTime: displayTime,
-              lastSnippet: displaySnippet,
-              tag,
-              messages: [],
-              isDemo: false,
-            };
-          });
-
-          setConversations(mapped);
-          if (isDesktop && mapped.length > 0) {
-            setSelectedId((prev) => prev || mapped[0].id);
-          }
-        }
-      } catch (err: unknown) {
-        if (!ignore) {
+        if (!silent) {
           const msg = err instanceof Error ? err.message : '';
           setFetchError(translateConversationError(msg));
         }
       } finally {
-        if (!ignore) {
+        if (!silent) {
           setIsLoadingConversations(false);
         }
       }
-    };
+    },
+    [effectiveOrgId, isDesktop, setConversations, setSelectedId]
+  );
 
-    loadData();
+  // Muat Pesan untuk Percakapan Tertentu
+  const fetchMessages = useCallback(
+    async (convId: string, silent = false) => {
+      if (!convId || !effectiveOrgId) return;
 
-    return () => {
-      ignore = true;
-    };
-  }, [effectiveOrgId, isDesktop, setConversations, setSelectedId]);
+      if (!silent) {
+        setIsLoadingMessages(true);
+        setMessageError(null);
+      }
 
-  // Muat Pesan untuk Percakapan yang Sedang Dibuka
-  useEffect(() => {
-    let ignore = false;
-    if (!selectedId || !effectiveOrgId) {
-      return;
-    }
-
-    const loadMessages = async () => {
-      setIsLoadingMessages(true);
-      setMessageError(null);
       try {
         const { data, error } = await supabase
           .from('messages')
           .select('id, conversation_id, organization_id, sender_type, body, created_at, sent_at')
-          .eq('conversation_id', selectedId)
+          .eq('conversation_id', convId)
           .eq('organization_id', effectiveOrgId)
           .order('created_at', { ascending: true });
 
-        if (ignore) return;
         if (error) {
           console.error('Error fetching messages:', error.message);
-          setMessageError(translateConversationError(error.message));
-        } else if (data) {
+          if (!silent) setMessageError(translateConversationError(error.message));
+          return;
+        }
+
+        if (data) {
           setConversations((prev) => {
-            const targetConv = prev.find((c) => c.id === selectedId);
+            const targetConv = prev.find((c) => c.id === convId);
             const contactName = targetConv?.name || 'Pelanggan';
             const mapped = data.map((m) =>
               mapDbMessageToChatMessage(m, contactName, currentUserFullName || 'Ahmad Fauzi')
@@ -594,7 +565,7 @@ export function ConversationsView({
             const lastMsg = mapped[mapped.length - 1];
 
             return prev.map((c) => {
-              if (c.id === selectedId) {
+              if (c.id === convId) {
                 return {
                   ...c,
                   messages: mapped,
@@ -608,23 +579,120 @@ export function ConversationsView({
           });
         }
       } catch (err: unknown) {
-        if (!ignore) {
+        if (!silent) {
           const msg = err instanceof Error ? err.message : '';
           setMessageError(translateConversationError(msg));
         }
       } finally {
-        if (!ignore) {
+        if (!silent) {
           setIsLoadingMessages(false);
         }
       }
-    };
+    },
+    [effectiveOrgId, currentUserFullName, setConversations]
+  );
 
-    loadMessages();
+  // Inisialisasi muat percakapan ketika ID organisasi tersedia
+  useEffect(() => {
+    let ignore = false;
+    if (!effectiveOrgId) return;
+
+    const timer = setTimeout(() => {
+      if (!ignore) {
+        fetchConversations(effectiveOrgId, false);
+      }
+    }, 0);
 
     return () => {
       ignore = true;
+      clearTimeout(timer);
     };
-  }, [selectedId, effectiveOrgId, currentUserFullName, setConversations]);
+  }, [effectiveOrgId, fetchConversations]);
+
+  // Muat Pesan untuk Percakapan yang Sedang Dibuka
+  useEffect(() => {
+    let ignore = false;
+    if (!selectedId || !effectiveOrgId) return;
+
+    const timer = setTimeout(() => {
+      if (!ignore) {
+        fetchMessages(selectedId, false);
+      }
+    }, 0);
+
+    return () => {
+      ignore = true;
+      clearTimeout(timer);
+    };
+  }, [selectedId, effectiveOrgId, fetchMessages]);
+
+  // Pada desktop jika ada percakapan dan belum ada yang dipilih, pilih percakapan pertama secara otomatis
+  useEffect(() => {
+    let ignore = false;
+    if (isDesktop && conversations.length > 0 && !selectedId && !hasUserClosedDetailRef.current) {
+      const timer = setTimeout(() => {
+        if (!ignore) {
+          setSelectedId(conversations[0].id);
+        }
+      }, 0);
+      return () => {
+        ignore = true;
+        clearTimeout(timer);
+      };
+    }
+  }, [isDesktop, conversations, selectedId, setSelectedId]);
+
+  // Sinkronisasi Real-time (Supabase Realtime) dan Polling Cadangan (4 detik)
+  useEffect(() => {
+    if (!effectiveOrgId) return;
+
+    // 1. Supabase Realtime Channel
+    const channel = supabase
+      .channel(`realtime_chat_${effectiveOrgId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'messages',
+          filter: `organization_id=eq.${effectiveOrgId}`,
+        },
+        () => {
+          fetchConversations(effectiveOrgId, true);
+          if (selectedId) {
+            fetchMessages(selectedId, true);
+          }
+          onConversationUpdated?.();
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'conversations',
+          filter: `organization_id=eq.${effectiveOrgId}`,
+        },
+        () => {
+          fetchConversations(effectiveOrgId, true);
+          onConversationUpdated?.();
+        }
+      )
+      .subscribe();
+
+    // 2. Polling cadangan setiap 4 detik untuk jaminan sinkronisasi jika websocket terbatas
+    const pollInterval = setInterval(() => {
+      fetchConversations(effectiveOrgId, true);
+      if (selectedId) {
+        fetchMessages(selectedId, true);
+      }
+    }, 4000);
+
+    return () => {
+      clearInterval(pollInterval);
+      supabase.removeChannel(channel);
+    };
+  }, [effectiveOrgId, selectedId, fetchConversations, fetchMessages]);
 
   // Hitung jumlah data per kategori
   // 'open': percakapan aktif/sedang ditangani
@@ -656,10 +724,112 @@ export function ConversationsView({
 
   // Handler memilih percakapan
   const handleSelectConversation = (id: string) => {
+    hasUserClosedDetailRef.current = false;
     setSelectedId(id);
     setConversations((prev) =>
       prev.map((c) => (c.id === id ? { ...c, unreadCount: 0 } : c))
     );
+  };
+
+  // Handler membuka modal konfirmasi hapus percakapan
+  const handleOpenDeleteDialog = (conv: Conversation, e?: any) => {
+    if (e && typeof e.stopPropagation === 'function') {
+      e.stopPropagation();
+    }
+    setConversationToDelete(conv);
+    setDeleteError(null);
+    setIsDeleteModalOpen(true);
+  };
+
+  // Handler membatalkan proses hapus percakapan
+  const handleCancelDelete = () => {
+    if (isDeleting) return;
+    setIsDeleteModalOpen(false);
+    setConversationToDelete(null);
+    setDeleteError(null);
+  };
+
+  // Handler eksekusi konfirmasi hapus percakapan
+  const handleConfirmDelete = async () => {
+    if (!conversationToDelete) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+
+    const targetConv = conversationToDelete;
+    const isTargetSelected = selectedId === targetConv.id;
+
+    try {
+      if (!targetConv.isDemo && effectiveOrgId) {
+        let deletedOnServer = false;
+
+        // 1. Coba panggil backend worker terautentikasi terlebih dahulu
+        try {
+          const clientRes = await deleteConversationClient(targetConv.id, effectiveOrgId);
+          if (clientRes.success) {
+            deletedOnServer = true;
+          } else if (
+            clientRes.error &&
+            !clientRes.error.includes('tidak terjangkau') &&
+            !clientRes.error.includes('Network') &&
+            !clientRes.error.includes('fetch')
+          ) {
+            console.warn('[Delete Conversation] Worker returned error:', clientRes.error);
+          }
+        } catch (workerErr) {
+          // Worker offline / unreachable, fallback ke Supabase client langsung
+        }
+
+        // 2. Jika worker belum menghapus (misal worker offline), jalankan via Supabase client langsung dengan RLS
+        if (!deletedOnServer) {
+          const { error: sbError } = await supabase
+            .from('conversations')
+            .delete()
+            .eq('id', targetConv.id)
+            .eq('organization_id', effectiveOrgId);
+
+          if (sbError) {
+            console.error('[Delete Conversation] Supabase delete error:', sbError.message);
+            setDeleteError(translateConversationError(sbError.message));
+            setIsDeleting(false);
+            return;
+          }
+        }
+      }
+
+      // Hapus dari state lokal percakapan
+      setConversations((prev) => prev.filter((c) => c.id !== targetConv.id));
+
+      // Jika percakapan yang dihapus adalah yang sedang dibuka, tutup panel detail
+      if (isTargetSelected) {
+        hasUserClosedDetailRef.current = true;
+        setSelectedId(null);
+      }
+
+      // Notifikasi ke parent (App.tsx / Dashboard) agar metrik Pesan Masuk & Percakapan langsung sinkron
+      onConversationDeleted?.(targetConv);
+      onConversationUpdated?.();
+
+      // Tutup dialog konfirmasi
+      setIsDeleteModalOpen(false);
+      setConversationToDelete(null);
+
+      // Tampilkan notifikasi sukses sementara
+      setDeleteSuccessNotice(`Riwayat percakapan dengan "${targetConv.name}" berhasil dihapus.`);
+      setTimeout(() => {
+        setDeleteSuccessNotice(null);
+      }, 3500);
+
+      // Sinkronkan daftar terbaru jika terhubung ke Supabase
+      if (!targetConv.isDemo && effectiveOrgId) {
+        fetchConversations(effectiveOrgId, true);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[Delete Conversation] Exception:', msg);
+      setDeleteError(translateConversationError(msg));
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   // Handler mengubah status penanganan di Supabase (hanya mengirim 'open' | 'pending' | 'resolved')
@@ -689,108 +859,162 @@ export function ConversationsView({
     }
   };
 
-  // Handler kirim pesan teks dari agen CS dan simpan ke public.messages
-  const handleSendMessage = async () => {
-    if (!selectedId || !effectiveOrgId || inputText.trim() === '' || isSending) return;
+  // Handler kirim pesan teks dari agen CS: WhatsApp FIRST -> Supabase Database
+  const handleSendMessage = useCallback(
+    async (textOverride?: string) => {
+      const messageToSend = (typeof textOverride === 'string' ? textOverride : inputText).trim();
+      if (!selectedId || !effectiveOrgId || messageToSend === '' || isSending) return;
 
-    const trimmed = inputText.trim();
-    const nowIso = new Date().toISOString();
-    const nowTime = new Date().toLocaleTimeString('id-ID', {
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-
-    const tempId = `temp_${Date.now()}`;
-    const agentDisplay = currentUserFullName ? `CS (${currentUserFullName})` : 'CS (Ahmad Fauzi)';
-    const optimisticMsg: ChatMessage = {
-      id: tempId,
-      sender: 'cs',
-      senderName: agentDisplay,
-      text: trimmed,
-      time: nowTime,
-      createdAt: nowIso,
-    };
-
-    setInputText('');
-    setIsSending(true);
-    setSendError(null);
-
-    // Optimistic UI Update: pesan agen yang sedang ditangani selalu berstatus 'open'
-    setConversations((prev) =>
-      prev.map((c) => {
-        if (c.id === selectedId) {
-          return {
-            ...c,
-            lastSnippet: trimmed,
-            lastTime: nowTime,
-            status: 'open',
-            messages: [...c.messages, optimisticMsg],
-          };
-        }
-        return c;
-      })
-    );
-
-    try {
-      // 1. Simpan pesan ke public.messages
-      const { data: insertedMsg, error: msgError } = await supabase
-        .from('messages')
-        .insert({
-          conversation_id: selectedId,
-          organization_id: effectiveOrgId,
-          sender_type: 'agent',
-          body: trimmed,
-          sent_at: nowIso,
-        })
-        .select('id, conversation_id, organization_id, sender_type, body, created_at, sent_at')
-        .single();
-
-      if (msgError) {
-        console.error('Error inserting message:', msgError.message);
-        setSendError(translateConversationError(msgError.message));
-        // Rollback pesan optimistik jika gagal
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === selectedId
-              ? { ...c, messages: c.messages.filter((m) => m.id !== tempId) }
-              : c
-          )
-        );
+      const targetPhone = selectedConversation?.phone;
+      if (!targetPhone || targetPhone === '-') {
+        setSendError('Nomor telepon pelanggan tidak valid atau kosong.');
         return;
       }
 
-      // 2. Perbarui last_message_at dan status percakapan di public.conversations (menjadi 'open')
-      await supabase
-        .from('conversations')
-        .update({
-          last_message_at: nowIso,
-          status: 'open',
-          updated_at: nowIso,
-        })
-        .eq('id', selectedId)
-        .eq('organization_id', effectiveOrgId);
+      if (targetPhone.includes('(Demo)')) {
+        setSendError('Percakapan demo hanya untuk simulasi antarmuka. Silakan pilih kontak WhatsApp nyata dari organisasi Anda.');
+        return;
+      }
 
-      // 3. Ganti ID sementara dengan ID resmi dari Supabase
-      if (insertedMsg) {
+      setIsSending(true);
+      setSendError(null);
+      setLastFailedMessage(null);
+      setSendSuccessNotice(null);
+
+      // Bersihkan input teks segera agar responsif
+      if (!textOverride) {
+        setInputText('');
+      }
+
+      const nowIso = new Date().toISOString();
+      const nowTime = new Date().toLocaleTimeString('id-ID', {
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+
+      try {
+        // 1. KIRIM KE WHATSAPP TERLEBIH DAHULU via Worker Staging (/api/send)
+        // Jangan menganggap pesan berhasil terkirim ke WhatsApp hanya karena tersimpan di DB
+        const sendRes = await sendWhatsAppMessage(targetPhone, messageToSend);
+
+        if (!sendRes.success) {
+          console.warn('[CS Chat] Gagal mengirim pesan ke WhatsApp worker:', sendRes.error);
+          setSendError(`Gagal mengirim ke WhatsApp: ${sendRes.error || 'Worker tidak terjangkau'}`);
+          setLastFailedMessage(messageToSend);
+          // Pulihkan teks ke input field jika belum diisi teks lain
+          setInputText((prev) => (prev === '' ? messageToSend : prev));
+          setIsSending(false);
+          return;
+        }
+
+        const waMessageId = sendRes.data?.messageId;
+
+        // 2. SIMPAN HASIL DAN STATUS PENGIRIMAN KE SUPABASE (public.messages)
+        const { data: insertedMsg, error: msgError } = await supabase
+          .from('messages')
+          .insert({
+            conversation_id: selectedId,
+            organization_id: effectiveOrgId,
+            sender_type: 'agent',
+            body: messageToSend,
+            sent_at: nowIso,
+          })
+          .select('id, conversation_id, organization_id, sender_type, body, created_at, sent_at')
+          .single();
+
+        if (msgError) {
+          console.error('[CS Chat] Pesan terkirim ke WhatsApp namun error simpan DB:', msgError.message);
+          setSendError('Pesan terkirim ke WhatsApp pelanggan, namun sinkronisasi riwayat database tertunda.');
+        }
+
+        // 3. PERBARUI PERCAKAPAN (public.conversations)
+        await supabase
+          .from('conversations')
+          .update({
+            last_message_at: nowIso,
+            status: 'open',
+            updated_at: nowIso,
+          })
+          .eq('id', selectedId)
+          .eq('organization_id', effectiveOrgId);
+
+        // 4. PERBARUI TAMPILAN PERCAKAPAN LOKAL TANPA DUPLIKASI
+        const officialMessageId = insertedMsg?.id || waMessageId || `msg_${Date.now()}`;
+        const newChatMessage: ChatMessage = {
+          id: officialMessageId,
+          sender: 'cs',
+          senderName: currentUserFullName ? `CS (${currentUserFullName})` : 'CS (Ahmad Fauzi)',
+          text: messageToSend,
+          time: nowTime,
+          createdAt: nowIso,
+        };
+
         setConversations((prev) =>
           prev.map((c) => {
             if (c.id === selectedId) {
+              const alreadyExists = c.messages.some(
+                (m) =>
+                  m.id === officialMessageId ||
+                  (m.text === messageToSend && m.sender === 'cs' && m.time === nowTime)
+              );
               return {
                 ...c,
-                messages: c.messages.map((m) =>
-                  m.id === tempId ? { ...m, id: insertedMsg.id } : m
-                ),
+                lastSnippet: messageToSend,
+                lastTime: nowTime,
+                status: 'open',
+                messages: alreadyExists ? c.messages : [...c.messages, newChatMessage],
               };
             }
             return c;
           })
         );
+
+        setSendSuccessNotice('Pesan berhasil terkirim ke WhatsApp pelanggan ✓');
+        onConversationUpdated?.();
+        setTimeout(() => {
+          setSendSuccessNotice(null);
+        }, 3000);
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[CS Chat] Exception saat pengiriman pesan:', msg);
+        setSendError(`Terjadi kendala pengiriman: ${msg}`);
+        setLastFailedMessage(messageToSend);
+        setInputText((prev) => (prev === '' ? messageToSend : prev));
+      } finally {
+        setIsSending(false);
       }
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '';
-      setSendError(translateConversationError(msg));
+    },
+    [
+      selectedId,
+      effectiveOrgId,
+      inputText,
+      isSending,
+      currentUserFullName,
+      selectedConversation,
+      setConversations,
+    ]
+  );
+
+  // Handler retry pengalihan pendaftar ke CS dari dashboard
+  const handleRetryHandoff = async () => {
+    if (!selectedId || isRetryingHandoff) return;
+    setIsRetryingHandoff(true);
+    setRetryHandoffError(null);
+    setRetryHandoffNotice(null);
+
+    try {
+      const res = await retryRegistrationHandoffClient(selectedId, effectiveOrgId);
+      if (res.success) {
+        setRetryHandoffNotice('Notifikasi pendaftaran berhasil dikirim ulang ke WhatsApp petugas CS!');
+        await fetchConversations(undefined, true);
+        setTimeout(() => setRetryHandoffNotice(null), 4000);
+      } else {
+        setRetryHandoffError(res.error || 'Gagal mengirim notifikasi ke CS pendaftaran.');
+      }
+    } catch (err: any) {
+      setRetryHandoffError(err?.message || 'Gagal menghubungi worker.');
     } finally {
-      setIsSending(false);
+      setIsRetryingHandoff(false);
     }
   };
 
@@ -887,6 +1111,10 @@ export function ConversationsView({
             })
             .eq('id', existing.id)
             .eq('organization_id', effectiveOrgId);
+
+          if (existing.phone && existing.phone !== '-' && !existing.phone.includes('(Demo)')) {
+            await sendWhatsAppMessage(existing.phone, trimmed);
+          }
         } catch (e) {
           console.error('Error sending message to existing conversation:', e);
         }
@@ -955,6 +1183,14 @@ export function ConversationsView({
             selectedContactForNew.name,
             currentUserFullName || 'Ahmad Fauzi'
           );
+
+          if (selectedContactForNew.phone && selectedContactForNew.phone !== '-' && !selectedContactForNew.phone.includes('(Demo)')) {
+            try {
+              await sendWhatsAppMessage(selectedContactForNew.phone, trimmed);
+            } catch (sendErr) {
+              console.warn('Gagal mengirim pesan awal ke WhatsApp worker:', sendErr);
+            }
+          }
         }
       }
 
@@ -1103,6 +1339,14 @@ export function ConversationsView({
         </TouchableOpacity>
       </View>
 
+      {/* Banner Sukses Hapus Percakapan */}
+      {deleteSuccessNotice && (
+        <View style={styles.deleteSuccessBanner}>
+          <AppIcon name="check" size={13} color="#166534" />
+          <Text style={styles.deleteSuccessText}>{deleteSuccessNotice}</Text>
+        </View>
+      )}
+
       {/* Daftar Item Percakapan */}
       {isLoadingConversations ? (
         <View style={styles.loadingContainer}>
@@ -1168,7 +1412,22 @@ export function ConversationsView({
                       <Text style={[styles.convName, isSelected && styles.convNameSelected]} numberOfLines={1}>
                         {conv.name}
                       </Text>
-                      <Text style={styles.convTime}>{conv.lastTime}</Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={styles.convTime}>{conv.lastTime}</Text>
+                        <TouchableOpacity
+                          style={styles.btnDeleteConvCard}
+                          onPress={(e) => {
+                            e?.stopPropagation?.();
+                            handleOpenDeleteDialog(conv, e);
+                          }}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          accessibilityLabel={`Hapus percakapan dengan ${conv.name}`}
+                          accessibilityRole="button"
+                          activeOpacity={0.7}
+                        >
+                          <AppIcon name="trash" size={12} color={COLORS.textMuted} />
+                        </TouchableOpacity>
+                      </View>
                     </View>
 
                     <Text style={styles.convPhone} numberOfLines={1}>
@@ -1183,7 +1442,19 @@ export function ConversationsView({
                     </Text>
 
                     <View style={styles.convFooterRow}>
-                      <StatusBadge status={conv.status} />
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap', flex: 1 }}>
+                        <StatusBadge status={conv.status} />
+                        {conv.handoffStatus === 'sent' && (
+                          <View style={styles.handoffPillSent}>
+                            <Text style={styles.handoffPillTextSent}>PSB: CS</Text>
+                          </View>
+                        )}
+                        {conv.handoffStatus === 'failed' && (
+                          <View style={styles.handoffPillFailed}>
+                            <Text style={styles.handoffPillTextFailed}>PSB: Gagal</Text>
+                          </View>
+                        )}
+                      </View>
                       {conv.unreadCount > 0 && (
                         <View style={styles.unreadBadge}>
                           <Text style={styles.unreadBadgeText}>{conv.unreadCount}</Text>
@@ -1206,22 +1477,52 @@ export function ConversationsView({
   const renderConversationDetail = () => {
     if (!selectedConversation) {
       return (
-        <View style={styles.emptyDetailContainer}>
-          <View style={styles.emptyDetailIconCircle}>
-            <AppIcon name="chat" size={28} color={COLORS.forestDark} />
+        <View style={styles.emptyDetailWrapper}>
+          <View style={styles.emptyDetailCenter}>
+            <View style={styles.emptyDetailIconCircle}>
+              <AppIcon name="chat" size={28} color={COLORS.forestDark} />
+            </View>
+            <Text style={styles.emptyDetailTitle}>Pilih Percakapan Pelanggan</Text>
+            <Text style={styles.emptyDetailDesc}>
+              Pilih salah satu percakapan di sebelah kiri untuk melihat riwayat pesan pelanggan atau mulai percakapan baru.
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14, flexWrap: 'wrap', justifyContent: 'center' }}>
+              {conversations.length > 0 && (
+                <TouchableOpacity
+                  style={styles.btnSelectFirst}
+                  onPress={() => setSelectedId(conversations[0].id)}
+                  activeOpacity={0.8}
+                >
+                  <AppIcon name="chat" size={13} color={COLORS.forestDark} />
+                  <Text style={styles.btnSelectFirstText}>Buka Percakapan Pertama</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={styles.btnCreatePrimary}
+                onPress={handleOpenNewConvModal}
+                activeOpacity={0.8}
+              >
+                <AppIcon name="plus" size={13} color="#FFFFFF" />
+                <Text style={styles.btnCreatePrimaryText}>Mulai Percakapan Baru</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-          <Text style={styles.emptyDetailTitle}>Pilih Percakapan Pelanggan</Text>
-          <Text style={styles.emptyDetailDesc}>
-            Pilih salah satu percakapan di sebelah kiri untuk melihat riwayat pesan pelanggan atau mulai percakapan baru.
-          </Text>
-          <TouchableOpacity
-            style={[styles.btnCreatePrimary, { marginTop: 14 }]}
-            onPress={handleOpenNewConvModal}
-            activeOpacity={0.8}
-          >
-            <AppIcon name="plus" size={13} color="#FFFFFF" />
-            <Text style={styles.btnCreatePrimaryText}>Mulai Percakapan Baru</Text>
-          </TouchableOpacity>
+
+          {/* Kolom Input Nonaktif sebagai Petunjuk Visual Tempat Mengetik Pesan */}
+          <View style={styles.inputAreaDisabled}>
+            <View style={styles.inputWrapperDisabled}>
+              <Text style={styles.inputPlaceholderDisabled}>
+                Pilih percakapan dari daftar di sebelah kiri untuk mulai membalas pesan WhatsApp...
+              </Text>
+              <View style={styles.btnSendDisabledPlaceholder}>
+                <AppIcon name="send" size={14} color={COLORS.textMuted} />
+                <Text style={styles.btnSendDisabledText}>Kirim</Text>
+              </View>
+            </View>
+            <Text style={styles.inputHelperText}>
+              Pesan balasan CS akan dikirim langsung ke WhatsApp pelanggan dan dicatat di database Supabase.
+            </Text>
+          </View>
         </View>
       );
     }
@@ -1304,16 +1605,96 @@ export function ConversationsView({
                 <Text style={styles.btnSwitchAiText}>Alihkan ke AI</Text>
               </TouchableOpacity>
             )}
+
+            {/* Tombol Hapus Percakapan */}
+            <TouchableOpacity
+              style={styles.btnDeleteDetail}
+              onPress={() => handleOpenDeleteDialog(selectedConversation)}
+              activeOpacity={0.8}
+              accessibilityLabel="Hapus percakapan ini"
+            >
+              <AppIcon name="trash" size={12} color="#DC2626" />
+              <Text style={styles.btnDeleteDetailText}>Hapus</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
-        {/* Disclaimer Bar: Kejujuran Penyimpanan Database */}
+        {/* Status Sinkronisasi WhatsApp & Database */}
         <View style={styles.disclaimerBar}>
-          <AppIcon name="alert" size={14} color={COLORS.warningText} />
+          <AppIcon name="check" size={13} color={COLORS.emerald} />
           <Text style={styles.disclaimerText}>
-            Pesan tersimpan di basis data Supabase (Mode Antrean Agen CS). Pengiriman pesan sungguhan ke WhatsApp memerlukan integrasi gateway resmi.
+            Tersinkronisasi langsung dengan basis data Supabase & Worker WhatsApp Staging. Pesan masuk dan keluar tersimpan secara persisten.
           </Text>
         </View>
+
+        {/* Banner Pengalihan CS Pendaftaran (Handoff Tracking) */}
+        {selectedConversation.handoffStatus === 'sent' && (
+          <View style={styles.handoffSentBanner}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, flex: 1 }}>
+              <View style={styles.handoffSentIconBox}>
+                <AppIcon name="check" size={14} color="#166534" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <Text style={styles.handoffSentTitle}>
+                    Pendaftar Dialihkan ke CS: {selectedConversation.assignedToName || selectedConversation.handoffDepartment || 'Panitia PSB'}
+                  </Text>
+                  <View style={styles.handoffStatusTagSent}>
+                    <Text style={styles.handoffStatusTagTextSent}>TERKIRIM</Text>
+                  </View>
+                </View>
+                <Text style={styles.handoffSentSub}>
+                  Notifikasi WhatsApp terkirim ke {selectedConversation.handoffCsPhone ? `+${selectedConversation.handoffCsPhone}` : 'petugas CS'}
+                  {selectedConversation.handoffNotifiedAt ? ` pada ${selectedConversation.handoffNotifiedAt}` : ''}.
+                  {selectedConversation.handoffSummary ? ` Ringkasan: "${selectedConversation.handoffSummary}"` : ''}
+                </Text>
+              </View>
+            </View>
+          </View>
+        )}
+
+        {selectedConversation.handoffStatus === 'failed' && (
+          <View style={styles.handoffFailedBanner}>
+            <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, flex: 1 }}>
+              <View style={styles.handoffFailedIconBox}>
+                <AppIcon name="alert" size={14} color="#DC2626" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <Text style={styles.handoffFailedTitle}>Pengalihan CS Pendaftaran Gagal</Text>
+                  <View style={styles.handoffStatusTagFailed}>
+                    <Text style={styles.handoffStatusTagTextFailed}>GAGAL</Text>
+                  </View>
+                </View>
+                <Text style={styles.handoffFailedSub}>
+                  {selectedConversation.handoffError || retryHandoffError || 'Notifikasi WhatsApp tidak berhasil disampaikan ke nomor petugas pendaftaran.'}
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity
+              style={[styles.btnRetryHandoff, isRetryingHandoff && { opacity: 0.7 }]}
+              onPress={handleRetryHandoff}
+              disabled={isRetryingHandoff}
+              activeOpacity={0.8}
+            >
+              {isRetryingHandoff ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <>
+                  <AppIcon name="link" size={12} color="#FFFFFF" />
+                  <Text style={styles.btnRetryHandoffText}>Coba Alihkan Lagi</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {retryHandoffNotice && (
+          <View style={styles.sendSuccessBanner}>
+            <AppIcon name="check" size={13} color="#166534" />
+            <Text style={styles.sendSuccessText}>{retryHandoffNotice}</Text>
+          </View>
+        )}
 
         {/* Chat History Thread */}
         <ScrollView style={styles.chatThreadScroll} contentContainerStyle={styles.chatThreadContent}>
@@ -1422,12 +1803,35 @@ export function ConversationsView({
           </ScrollView>
         </View>
 
-        {/* Input Kirim Pesan */}
+        {/* Input Kirim Pesan CS */}
         <View style={styles.inputArea}>
+          {/* Banner Notifikasi Berhasil */}
+          {sendSuccessNotice && (
+            <View style={styles.sendSuccessBanner}>
+              <AppIcon name="check" size={13} color="#166534" />
+              <Text style={styles.sendSuccessText}>{sendSuccessNotice}</Text>
+            </View>
+          )}
+
+          {/* Banner Error dengan Tombol Coba Lagi */}
           {sendError && (
             <View style={styles.sendErrorBanner}>
-              <Text style={styles.sendErrorText}>{sendError}</Text>
-              <TouchableOpacity onPress={() => setSendError(null)}>
+              <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <AppIcon name="alert" size={13} color="#DC2626" />
+                <Text style={styles.sendErrorText} numberOfLines={2}>
+                  {sendError}
+                </Text>
+              </View>
+              {lastFailedMessage && (
+                <TouchableOpacity
+                  style={styles.btnRetrySend}
+                  onPress={() => handleSendMessage(lastFailedMessage)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.btnRetrySendText}>Coba Lagi</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => setSendError(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                 <AppIcon name="close" size={11} color="#DC2626" />
               </TouchableOpacity>
             </View>
@@ -1436,24 +1840,41 @@ export function ConversationsView({
           <View style={styles.inputWrapper}>
             <TextInput
               style={styles.chatTextInput}
-              placeholder="Ketik balasan pesan agen CS (tersimpan ke tabel messages)..."
+              placeholder="Ketik balasan pesan agen CS (tekan Enter untuk kirim)..."
               placeholderTextColor={COLORS.textMuted}
               value={inputText}
               onChangeText={setInputText}
               multiline
               editable={!isSending}
+              onKeyPress={(e: any) => {
+                if (Platform.OS === 'web' && e.nativeEvent?.key === 'Enter' && !e.nativeEvent?.shiftKey) {
+                  e.preventDefault();
+                  if (inputText.trim().length > 0 && !isSending) {
+                    handleSendMessage();
+                  }
+                }
+              }}
+              onSubmitEditing={() => {
+                if (inputText.trim().length > 0 && !isSending) {
+                  handleSendMessage();
+                }
+              }}
             />
             <TouchableOpacity
               style={[
                 styles.btnSend,
                 (inputText.trim().length === 0 || isSending) && styles.btnSendDisabled,
               ]}
-              onPress={handleSendMessage}
+              onPress={() => handleSendMessage()}
               disabled={inputText.trim().length === 0 || isSending}
               activeOpacity={0.8}
+              accessibilityLabel="Kirim pesan balasan ke WhatsApp"
             >
               {isSending ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
+                <>
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <Text style={styles.btnSendText}>Mengirim...</Text>
+                </>
               ) : (
                 <>
                   <AppIcon name="send" size={14} color="#FFFFFF" />
@@ -1462,9 +1883,17 @@ export function ConversationsView({
               )}
             </TouchableOpacity>
           </View>
-          <Text style={styles.inputHelperText}>
-            Pesan terkirim akan disimpan ke tabel public.messages dengan relasi organization_id dan status aktif (open).
-          </Text>
+          <View style={styles.inputFooterRow}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+              <View style={styles.statusDotSmall} />
+              <Text style={styles.inputHelperText}>
+                Terkirim langsung ke WhatsApp pelanggan & tersimpan di database Supabase.
+              </Text>
+            </View>
+            {inputText.trim().length > 0 && (
+              <Text style={styles.charCountText}>{inputText.trim().length} karakter</Text>
+            )}
+          </View>
         </View>
       </View>
     );
@@ -1632,6 +2061,110 @@ export function ConversationsView({
   );
 
   // ==========================================
+  // RENDER MODAL: KONFIRMASI HAPUS PERCAKAPAN
+  // ==========================================
+  const renderDeleteConfirmModal = () => (
+    <Modal
+      visible={isDeleteModalOpen && conversationToDelete !== null}
+      transparent
+      animationType="fade"
+      onRequestClose={handleCancelDelete}
+    >
+      <View style={styles.modalOverlay}>
+        <TouchableOpacity
+          style={styles.modalBackdrop}
+          activeOpacity={1}
+          onPress={handleCancelDelete}
+        />
+
+        {conversationToDelete && (
+          <View style={[styles.modalCard, { maxWidth: 440 }]}>
+            <View style={styles.deleteConfirmHeader}>
+              <View style={styles.deleteAlertIconCircle}>
+                <AppIcon name="trash" size={20} color="#DC2626" />
+              </View>
+              <Text style={styles.deleteDialogTitle}>Hapus Percakapan WABiz?</Text>
+              <Text style={styles.deleteDialogDesc}>
+                Anda akan menghapus riwayat percakapan untuk kontak berikut:
+              </Text>
+
+              {/* Kartu Identitas Percakapan */}
+              <View style={styles.deleteTargetCard}>
+                <View style={[styles.deleteTargetAvatar, { backgroundColor: conversationToDelete.avatarBg }]}>
+                  <Text style={styles.deleteTargetAvatarText}>{conversationToDelete.avatarText}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.deleteTargetName} numberOfLines={1}>
+                    {conversationToDelete.name}
+                  </Text>
+                  <Text style={styles.deleteTargetPhone}>
+                    {maskPhone(conversationToDelete.phone)}
+                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                    <StatusBadge status={conversationToDelete.status} />
+                    <Text style={styles.deleteTargetMsgCount}>
+                      {conversationToDelete.messages.length} pesan riwayat
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              {/* Catatan / Disclaimer Keamanan */}
+              <View style={styles.deleteDisclaimerBox}>
+                <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                  <AppIcon name="alert" size={14} color="#D97706" />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.deleteDisclaimerTitle}>Cakupan Penghapusan:</Text>
+                    <Text style={styles.deleteDisclaimerText}>
+                      • Menghapus riwayat pesan dan percakapan ini dari sistem WABiz.{'\n'}
+                      • Kontak pelanggan <Text style={{ fontWeight: '700' }}>tetap tersimpan</Text> di modul Kontak.{'\n'}
+                      • Tindakan ini <Text style={{ fontWeight: '700' }}>TIDAK</Text> menghapus pesan pada aplikasi WhatsApp pelanggan.
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+
+            {deleteError && (
+              <View style={styles.modalErrorBanner}>
+                <AppIcon name="alert" size={13} color="#DC2626" />
+                <Text style={styles.modalErrorText}>{deleteError}</Text>
+              </View>
+            )}
+
+            <View style={styles.modalFooterActions}>
+              <TouchableOpacity
+                style={styles.modalBtnCancel}
+                onPress={handleCancelDelete}
+                disabled={isDeleting}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.modalBtnCancelText}>Batal</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.btnConfirmDelete, isDeleting && styles.modalBtnSubmitDisabled]}
+                onPress={handleConfirmDelete}
+                disabled={isDeleting}
+                activeOpacity={0.8}
+              >
+                {isDeleting ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                    <Text style={styles.btnConfirmDeleteText}>Menghapus...</Text>
+                  </View>
+                ) : (
+                  <Text style={styles.btnConfirmDeleteText}>Hapus Percakapan</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        )}
+      </View>
+    </Modal>
+  );
+
+  // ==========================================
   // UTAMA: RESPONSIVE SPLIT / SINGLE VIEW
   // ==========================================
   return (
@@ -1664,7 +2197,7 @@ export function ConversationsView({
       </View>
 
       {/* Kontainer Komunikasi: Desktop (Split 2 Kolom) vs Mobile (Pindah Tampilan) */}
-      <View style={styles.inboxContainer}>
+      <View style={[styles.inboxContainer, !isDesktop && styles.inboxContainerMobile]}>
         {isDesktop ? (
           <>
             {renderConversationList()}
@@ -1677,6 +2210,8 @@ export function ConversationsView({
 
       {/* Render Modal Buat Percakapan */}
       {renderNewConversationModal()}
+      {/* Render Modal Konfirmasi Hapus Percakapan */}
+      {renderDeleteConfirmModal()}
     </View>
   );
 }
@@ -1762,7 +2297,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     flexDirection: 'row',
-    minHeight: 640,
+    flex: 1,
+    minHeight: 480,
     overflow: 'hidden',
     ...Platform.select({
       ios: {
@@ -1776,20 +2312,28 @@ const styles = StyleSheet.create({
       },
     }),
   },
+  inboxContainerMobile: {
+    flexDirection: 'column',
+    minHeight: 0,
+    flex: 1,
+  },
 
   // ----------------------------------------
   // KOLOM KIRI: DAFTAR PERCAKAPAN
   // ----------------------------------------
   listColumn: {
-    width: 350,
+    width: 340,
     borderRightWidth: 1,
     borderRightColor: COLORS.border,
     backgroundColor: COLORS.surface,
     flexDirection: 'column',
+    height: '100%',
   },
   listColumnMobile: {
     width: '100%',
     borderRightWidth: 0,
+    flex: 1,
+    height: '100%',
   },
   listSearchContainer: {
     padding: 12,
@@ -2050,11 +2594,13 @@ const styles = StyleSheet.create({
   detailPanelDesktop: {
     flex: 1,
     backgroundColor: COLORS.surface,
+    height: '100%',
   },
   detailContainer: {
     flex: 1,
     flexDirection: 'column',
     backgroundColor: COLORS.surface,
+    height: '100%',
   },
   detailHeader: {
     paddingHorizontal: 18,
@@ -2183,27 +2729,152 @@ const styles = StyleSheet.create({
     color: COLORS.purpleText,
   },
 
-  // Disclaimer banner
+  // Disclaimer / Sync Status banner
   disclaimerBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.warningBg,
+    backgroundColor: '#F0FDF4',
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.warningBorder,
+    borderBottomColor: '#DCFCE7',
     paddingHorizontal: 14,
     paddingVertical: 7,
     gap: 8,
   },
   disclaimerText: {
     fontSize: 11,
-    color: COLORS.warningText,
+    color: '#166534',
     flex: 1,
     lineHeight: 15,
+  },
+
+  // Handoff Status Banners & Tags
+  handoffSentBanner: {
+    backgroundColor: '#F0FDF4',
+    borderBottomWidth: 1,
+    borderBottomColor: '#BBF7D0',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  handoffSentIconBox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#DCFCE7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  handoffSentTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  handoffSentSub: {
+    fontSize: 11,
+    color: '#15803D',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  handoffStatusTagSent: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  handoffStatusTagTextSent: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#166534',
+    letterSpacing: 0.3,
+  },
+  handoffFailedBanner: {
+    backgroundColor: '#FEF2F2',
+    borderBottomWidth: 1,
+    borderBottomColor: '#FECACA',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    flexWrap: 'wrap',
+  },
+  handoffFailedIconBox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  handoffFailedTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#B91C1C',
+  },
+  handoffFailedSub: {
+    fontSize: 11,
+    color: '#DC2626',
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  handoffStatusTagFailed: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  handoffStatusTagTextFailed: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#B91C1C',
+    letterSpacing: 0.3,
+  },
+  btnRetryHandoff: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    gap: 6,
+  },
+  btnRetryHandoffText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  handoffPillSent: {
+    backgroundColor: '#DCFCE7',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  handoffPillTextSent: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  handoffPillFailed: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+  },
+  handoffPillTextFailed: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#DC2626',
   },
 
   // Chat Thread
   chatThreadScroll: {
     flex: 1,
+    minHeight: 0,
     backgroundColor: '#F7FAF8',
   },
   chatThreadContent: {
@@ -2386,13 +3057,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     backgroundColor: '#FEE2E2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderRadius: 6,
+    gap: 8,
   },
   sendErrorText: {
     fontSize: 11,
     color: '#DC2626',
+    flex: 1,
+  },
+  btnRetrySend: {
+    backgroundColor: '#DC2626',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  btnRetrySendText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  sendSuccessBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    gap: 6,
+  },
+  sendSuccessText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#166534',
+    flex: 1,
   },
   inputWrapper: {
     flexDirection: 'row',
@@ -2430,14 +3133,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  inputFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+  },
+  statusDotSmall: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: COLORS.emerald,
+  },
+  charCountText: {
+    fontSize: 10,
+    color: COLORS.textMuted,
+  },
   inputHelperText: {
     fontSize: 10,
     color: COLORS.textMuted,
-    paddingHorizontal: 4,
   },
 
   // Empty Detail Placeholder
-  emptyDetailContainer: {
+  emptyDetailWrapper: {
+    flex: 1,
+    flexDirection: 'column',
+    height: '100%',
+    backgroundColor: COLORS.surface,
+  },
+  emptyDetailCenter: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2467,6 +3191,61 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     maxWidth: 380,
     lineHeight: 18,
+  },
+  btnSelectFirst: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.emeraldBorder,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 7,
+    gap: 6,
+  },
+  btnSelectFirstText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.forestDark,
+  },
+  inputAreaDisabled: {
+    padding: 12,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    backgroundColor: COLORS.surfaceMuted,
+    gap: 6,
+  },
+  inputWrapperDisabled: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    opacity: 0.7,
+  },
+  inputPlaceholderDisabled: {
+    flex: 1,
+    fontSize: 12,
+    color: COLORS.textMuted,
+    fontStyle: 'italic',
+  },
+  btnSendDisabledPlaceholder: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.border,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 4,
+  },
+  btnSendDisabledText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: COLORS.textMuted,
   },
 
   // ----------------------------------------
@@ -2722,6 +3501,159 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.borderStrong,
   },
   modalBtnSubmitText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  // ----------------------------------------
+  // HAPUS PERCAKAPAN: UI & MODAL KONFIRMASI
+  // ----------------------------------------
+  modalBackdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+  },
+  btnDeleteConvCard: {
+    padding: 4,
+    borderRadius: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 2,
+  },
+  btnDeleteDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  btnDeleteDetailText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#DC2626',
+  },
+  deleteSuccessBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#DCFCE7',
+    borderWidth: 1,
+    borderColor: '#86EFAC',
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginHorizontal: 14,
+    marginBottom: 8,
+  },
+  deleteSuccessText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#166534',
+    flex: 1,
+  },
+  deleteConfirmHeader: {
+    paddingHorizontal: 18,
+    paddingTop: 16,
+    paddingBottom: 8,
+    alignItems: 'center',
+  },
+  deleteAlertIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FCA5A5',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 10,
+  },
+  deleteDialogTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: COLORS.textDark,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  deleteDialogDesc: {
+    fontSize: 12,
+    color: COLORS.textSecondary,
+    textAlign: 'center',
+    lineHeight: 17,
+    marginBottom: 12,
+  },
+  deleteTargetCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: COLORS.surfaceMuted,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 8,
+    padding: 10,
+    width: '100%',
+    marginBottom: 12,
+  },
+  deleteTargetAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  deleteTargetAvatarText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  deleteTargetName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  deleteTargetPhone: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  deleteTargetMsgCount: {
+    fontSize: 11,
+    color: COLORS.textMuted,
+  },
+  deleteDisclaimerBox: {
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FCD34D',
+    borderRadius: 8,
+    padding: 10,
+    width: '100%',
+    marginBottom: 4,
+  },
+  deleteDisclaimerTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#92400E',
+    marginBottom: 3,
+  },
+  deleteDisclaimerText: {
+    fontSize: 11,
+    color: '#78350F',
+    lineHeight: 16,
+  },
+  btnConfirmDelete: {
+    backgroundColor: '#DC2626',
+    borderRadius: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  btnConfirmDeleteText: {
     fontSize: 12,
     fontWeight: '700',
     color: '#FFFFFF',

@@ -37,7 +37,7 @@ Sesuaikan nilai di file `.env`:
 ```env
 HOST=127.0.0.1
 PORT=4000
-LOCAL_API_KEY=wabiz_staging_local_key_dev
+LOCAL_API_KEY=ganti_dengan_token_rahasia_lokal_minimal_16_karakter
 SESSION_DIR=./sessions
 SHOW_TERMINAL_QR=true
 MAX_RECONNECT_RETRIES=5
@@ -74,10 +74,9 @@ Untuk menautkan nomor WhatsApp uji coba ke worker:
    - Pilih **Perangkat Tertaut** (*Linked Devices*).
    - Ketuk tombol **Tautkan Perangkat** (*Link a Device*).
 2. **Scan QR Code**:
-   - **Opsi A (Browser Lokal)**: Buka browser komputer Anda di alamat:
-     `http://127.0.0.1:4000/qr-view?key=wabiz_staging_local_key_dev`
-     *(Ganti nilai `key` sesuai dengan `LOCAL_API_KEY` di file `.env` Anda)*. Halaman ini akan me-render QR Code visual dan auto-refresh saat QR diperbarui.
-   - **Opsi B (Terminal Console)**: Jika `SHOW_TERMINAL_QR=true`, QR Code berukuran kecil akan langsung muncul di jendela terminal Anda.
+   - **Opsi A (Antarmuka Aplikasi WABiz)**: Buka aplikasi WABiz, masuk ke menu **Pengaturan > Gateway WhatsApp**. QR Code pairing terproteksi akan ditampilkan secara visual melalui endpoint `GET /api/qr` yang mewajibkan autentikasi admin.
+   - **Opsi B (Terminal Console)**: Jika `SHOW_TERMINAL_QR=true`, QR Code berukuran kecil akan langsung muncul di jendela terminal worker Anda.
+   - **Opsi C (API Terautentikasi)**: Gunakan `curl -X GET http://127.0.0.1:4000/api/qr -H "Authorization: Bearer <JWT_ADMIN>"` untuk mengambil payload data URL QR secara terproteksi.
 3. Setelah dipindai, status di terminal akan berubah menjadi:
    `[WhatsApp] TERHUBUNG SUKSES! Nomor akun: +628xxxxxxxxxx`
 
@@ -103,7 +102,7 @@ Gunakan perintah `curl` atau aplikasi REST Client (Postman / Bruno / Thunder Cli
 ```bash
 curl -X POST http://127.0.0.1:4000/api/send \
   -H "Content-Type: application/json" \
-  -H "x-api-key: wabiz_staging_local_key_dev" \
+  -H "x-api-key: <LOCAL_API_KEY>" \
   -d '{
     "to": "6281234567890",
     "message": "Halo! Ini adalah pesan uji coba dari WABiz WhatsApp Staging Worker."
@@ -131,7 +130,7 @@ Untuk memutuskan koneksi tanpa menghapus sesi (bisa reconnect nanti):
 ```bash
 curl -X POST http://127.0.0.1:4000/api/disconnect \
   -H "Content-Type: application/json" \
-  -H "x-api-key: wabiz_staging_local_key_dev" \
+  -H "x-api-key: <LOCAL_API_KEY>" \
   -d '{"deleteSession": false}'
 ```
 
@@ -139,7 +138,7 @@ Untuk memutuskan koneksi **sekaligus menghapus seluruh kredensial sesi lokal**:
 ```bash
 curl -X POST http://127.0.0.1:4000/api/disconnect \
   -H "Content-Type: application/json" \
-  -H "x-api-key: wabiz_staging_local_key_dev" \
+  -H "x-api-key: <LOCAL_API_KEY>" \
   -d '{"deleteSession": true}'
 ```
 

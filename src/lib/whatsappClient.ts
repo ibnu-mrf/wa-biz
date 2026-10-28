@@ -4,15 +4,15 @@
  * =====================================================================
  * Menghubungkan UI React Native / Expo ke Baileys Worker Staging lokal (server/).
  * 
- * BATASAN KEAMANAN & LINGKUP:
- * - Klien ini ditujukan KHUSUS untuk pengembangan dan pengujian staging lokal (loopback).
- * - Kunci worker dibaca dari variabel lingkungan EXPO_PUBLIC_WHATSAPP_WORKER_KEY.
- * - PENTING: Pada Expo/React Native, variabel EXPO_PUBLIC_* disertakan dalam bundle klien.
- *   Oleh karena itu, kunci ini BUKAN rahasia produksi dan hanya berlaku pada lingkungan dev lokal.
- *   Pada tahap produksi (multi-tenant), komunikasi wajib melalui Supabase Edge Function terautentikasi JWT.
+ * KEAMANAN & AUTENTIKASI (P2.4):
+ * - Autentikasi ke backend worker sepenuhnya menggunakan token JWT pengguna aktif Supabase Auth
+ *   melalui header 'Authorization: Bearer <jwt>' dan 'x-supabase-auth'.
+ * - Kunci rahasia backend (LOCAL_API_KEY) TIDAK PERNAH disertakan atau dibaca oleh klien Expo,
+ *   mencegah kebocoran kredensial ke dalam bundel publik aplikasi.
  */
 
 import type { OrgProfile } from '../components/SettingsView';
+import { supabase } from './supabase';
 
 export type WhatsAppConnectionStatus =
   | 'disconnected'
@@ -71,13 +71,39 @@ export function getWorkerBaseUrl(): string {
 
 /**
  * Mendapatkan kunci autentikasi lokal untuk Worker Staging.
+ * @deprecated Sesuai perbaikan P2.4, frontend tidak lagi menggunakan atau membaca kunci rahasia lokal.
+ * Fungsi ini dipertahankan hanya sebagai stub kosong untuk kompatibilitas ke belakang.
  */
 export function getWorkerApiKey(): string {
-  const envKey = process.env.EXPO_PUBLIC_WHATSAPP_WORKER_KEY;
-  if (envKey && envKey.trim().length > 0) {
-    return envKey.trim();
+  return '';
+}
+
+/**
+ * Menghasilkan header otentikasi untuk request ke Worker Staging.
+ * Menggunakan token JWT pengguna aktif Supabase Auth (Authorization: Bearer <token> & x-supabase-auth).
+ * Tidak lagi menyertakan header x-api-key demi keamanan bundel klien (P2.4).
+ */
+export async function getWorkerAuthHeaders(includeContentType = true): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  };
+
+  if (includeContentType) {
+    headers['Content-Type'] = 'application/json';
   }
-  return 'wabiz_staging_local_key_dev';
+
+  try {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (token) {
+      headers['x-supabase-auth'] = token;
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch {
+    // Abaikan jika supabase offline
+  }
+
+  return headers;
 }
 
 /**
@@ -117,18 +143,15 @@ export async function checkWorkerHealth(): Promise<{ ok: boolean; worker?: strin
  */
 export async function getWhatsAppStatus(): Promise<WhatsAppClientResult<WhatsAppWorkerStatus>> {
   const baseUrl = getWorkerBaseUrl();
-  const apiKey = getWorkerApiKey();
 
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const headers = await getWorkerAuthHeaders(false);
 
     const res = await fetch(`${baseUrl}/api/status`, {
       method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        'x-api-key': apiKey,
-      },
+      headers,
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
@@ -136,7 +159,7 @@ export async function getWhatsAppStatus(): Promise<WhatsAppClientResult<WhatsApp
     if (res.status === 401) {
       return {
         success: false,
-        error: 'Autentikasi Worker gagal (401 Unauthorized). Kunci API lokal tidak valid.',
+        error: 'Autentikasi Worker gagal (401 Unauthorized). Sesi login Supabase tidak valid atau telah kedaluwarsa.',
       };
     }
 
@@ -165,18 +188,15 @@ export async function getWhatsAppStatus(): Promise<WhatsAppClientResult<WhatsApp
  */
 export async function getWhatsAppQr(): Promise<WhatsAppQrResponse> {
   const baseUrl = getWorkerBaseUrl();
-  const apiKey = getWorkerApiKey();
 
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const headers = await getWorkerAuthHeaders(false);
 
     const res = await fetch(`${baseUrl}/api/qr`, {
       method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        'x-api-key': apiKey,
-      },
+      headers,
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
@@ -185,7 +205,7 @@ export async function getWhatsAppQr(): Promise<WhatsAppQrResponse> {
       return {
         success: false,
         status: 'error',
-        error: 'Autentikasi Worker gagal (401 Unauthorized). Kunci API lokal tidak cocok.',
+        error: 'Autentikasi Worker gagal (401 Unauthorized). Sesi login Supabase tidak valid atau tidak memiliki hak akses.',
       };
     }
 
@@ -205,16 +225,12 @@ export async function getWhatsAppQr(): Promise<WhatsAppQrResponse> {
  */
 export async function reconnectWhatsApp(): Promise<WhatsAppClientResult> {
   const baseUrl = getWorkerBaseUrl();
-  const apiKey = getWorkerApiKey();
 
   try {
+    const headers = await getWorkerAuthHeaders(true);
     const res = await fetch(`${baseUrl}/api/reconnect`, {
       method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-      },
+      headers,
     });
 
     const json = await res.json();
@@ -236,16 +252,12 @@ export async function reconnectWhatsApp(): Promise<WhatsAppClientResult> {
  */
 export async function disconnectWhatsApp(deleteSession = false): Promise<WhatsAppClientResult> {
   const baseUrl = getWorkerBaseUrl();
-  const apiKey = getWorkerApiKey();
 
   try {
+    const headers = await getWorkerAuthHeaders(true);
     const res = await fetch(`${baseUrl}/api/disconnect`, {
       method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-      },
+      headers,
       body: JSON.stringify({ deleteSession }),
     });
 
@@ -262,6 +274,93 @@ export async function disconnectWhatsApp(deleteSession = false): Promise<WhatsAp
   }
 }
 
+/**
+ * Mengirim pesan WhatsApp keluar melalui Worker Staging lokal (Baileys).
+ */
+export async function sendWhatsAppMessage(
+  to: string,
+  message: string
+): Promise<WhatsAppClientResult<{ to: string; messageId?: string; sentAt?: string }>> {
+  const baseUrl = getWorkerBaseUrl();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const headers = await getWorkerAuthHeaders(true);
+
+    const res = await fetch(`${baseUrl}/api/send`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ to, message }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return { success: true, data: json.data };
+    }
+    return {
+      success: false,
+      error: json.error || `Gagal mengirim pesan (HTTP ${res.status}).`,
+    };
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      return {
+        success: false,
+        error: 'Timeout pengiriman pesan ke WhatsApp (12 detik).',
+      };
+    }
+    return {
+      success: false,
+      error: `Worker WhatsApp tidak terjangkau di ${baseUrl}: ${(err as Error).message}`,
+    };
+  }
+}
+
+/**
+ * Mencoba kembali (retry) pengalihan calon pendaftar ke CS dari dashboard
+ */
+export async function retryRegistrationHandoffClient(
+  conversationId: string,
+  organizationId?: string
+): Promise<WhatsAppClientResult<any>> {
+  const baseUrl = getWorkerBaseUrl();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const headers = await getWorkerAuthHeaders(true);
+
+    const res = await fetch(`${baseUrl}/api/handoff/retry`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ conversationId, organizationId }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return { success: true, data: json.data };
+    }
+    return {
+      success: false,
+      error: json.error || `Gagal melakukan retry pengalihan (HTTP ${res.status}).`,
+    };
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      return {
+        success: false,
+        error: 'Timeout percobaan retry pengalihan ke WhatsApp worker (15 detik).',
+      };
+    }
+    return {
+      success: false,
+      error: `Worker WhatsApp tidak terjangkau di ${baseUrl}: ${(err as Error).message}`,
+    };
+  }
+}
 
 /**
  * Sinkronkan profil organisasi dari Expo (setelah simpan ke Supabase)
@@ -274,7 +373,6 @@ export async function syncProfileToWorker(
   profile: OrgProfile
 ): Promise<WhatsAppClientResult> {
   const baseUrl = getWorkerBaseUrl();
-  const apiKey = getWorkerApiKey();
 
   // Konversi OrgProfile ke format lengkap yang diterima worker (server/src/ai.ts).
   // SEMUA field dikirim secara eksplisit (termasuk string kosong) agar
@@ -311,15 +409,12 @@ export async function syncProfileToWorker(
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const headers = await getWorkerAuthHeaders(true);
 
     const res = await fetch(`${baseUrl}/api/ai/config`, {
       method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-      },
-      body: JSON.stringify({ profile: workerProfile }),
+      headers,
+      body: JSON.stringify({ organizationId: workerProfile.orgId, profile: workerProfile }),
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
@@ -327,7 +422,7 @@ export async function syncProfileToWorker(
     if (res.status === 401) {
       return {
         success: false,
-        error: 'Autentikasi Worker gagal (401). Kunci API lokal tidak valid.',
+        error: 'Autentikasi Worker gagal (401). Sesi login Supabase tidak valid atau tidak memiliki peran admin.',
       };
     }
 
@@ -352,3 +447,386 @@ export async function syncProfileToWorker(
     };
   }
 }
+
+/**
+ * =====================================================================
+ * FASE 3: CLIENT HELPER MANAJEMEN KAMPANYE PERSISTEN
+ * =====================================================================
+ */
+
+export type GatewayReadinessCode =
+  | 'ready'
+  | 'waiting_gateway'
+  | 'unconfigured'
+  | 'unsupported'
+  | 'connection_error';
+
+export interface CampaignGatewayStatus {
+  isReady: boolean;
+  code: GatewayReadinessCode;
+  label: string;
+  message: string;
+  provider: 'baileys' | 'meta_cloud_api' | 'openwa';
+  providerDisplayName: string;
+  phone?: string;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Mengambil status kesiapan gateway pengiriman kampanye dari backend worker
+ */
+export async function getCampaignGatewayStatus(
+  organizationId?: string
+): Promise<WhatsAppClientResult<CampaignGatewayStatus>> {
+  const baseUrl = getWorkerBaseUrl();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    const headers = await getWorkerAuthHeaders(false);
+
+    const q = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+    const res = await fetch(`${baseUrl}/api/campaigns/gateway-status${q}`, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (res.status === 401) {
+      return {
+        success: false,
+        error: 'Autentikasi Worker gagal (401 Unauthorized). Sesi login Supabase tidak valid.',
+      };
+    }
+
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return {
+        success: true,
+        data: json.data,
+      };
+    }
+
+    return {
+      success: false,
+      error: json.error || `HTTP ${res.status}`,
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: `Gagal memuat status gateway WhatsApp: ${err?.message || err}`,
+    };
+  }
+}
+
+export interface CreateCampaignClientParams {
+  organizationId?: string;
+  name: string;
+  messageBody: string;
+  senderPhone?: string;
+  targetSegment?: string;
+  deliveryMode: 'now' | 'scheduled';
+  scheduledAt?: string | null;
+  contactIds?: string[];
+}
+
+export interface CampaignRecipientClientItem {
+  id: string;
+  campaignId: string;
+  contactId?: string | null;
+  phone: string;
+  name: string;
+  status: 'pending' | 'processing' | 'sent' | 'delivered' | 'failed' | 'skipped';
+  baileysMessageId?: string | null;
+  errorMessage?: string | null;
+  retryCount: number;
+  scheduledAt?: string | null;
+  sentAt?: string | null;
+  createdAt: string;
+}
+
+/**
+ * Membuat kampanye baru dan mendaftarkan antrean penerima persisten ke Worker
+ */
+export async function createPersistentCampaignClient(
+  params: CreateCampaignClientParams
+): Promise<WhatsAppClientResult<{
+  campaignId: string;
+  totalRecipients: number;
+  validRecipients: number;
+  skippedRecipients: number;
+}>> {
+  const baseUrl = getWorkerBaseUrl();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const headers = await getWorkerAuthHeaders(true);
+
+    const res = await fetch(`${baseUrl}/api/campaigns/create`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(params),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return { success: true, data: json.data };
+    }
+    return { success: false, error: json.error || `HTTP ${res.status}` };
+  } catch (err: any) {
+    if (err?.name === 'AbortError') {
+      return { success: false, error: 'Timeout pembuatan kampanye di worker (10s).' };
+    }
+    return { success: false, error: `Gagal terhubung ke worker WhatsApp: ${err?.message || err}` };
+  }
+}
+
+/**
+ * Membatalkan kampanye terjadwal di worker
+ */
+export async function cancelCampaignClient(
+  campaignId: string,
+  organizationId?: string
+): Promise<WhatsAppClientResult<{ message: string }>> {
+  const baseUrl = getWorkerBaseUrl();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const headers = await getWorkerAuthHeaders(true);
+
+    const res = await fetch(`${baseUrl}/api/campaigns/${campaignId}/cancel`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ organizationId }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return { success: true, data: json.data, message: json.data?.message };
+    }
+    return { success: false, error: json.error || `HTTP ${res.status}` };
+  } catch (err: any) {
+    return { success: false, error: `Gagal membatalkan kampanye: ${err?.message || err}` };
+  }
+}
+
+/**
+ * Mengambil daftar penerima dan status delivery per kontak untuk sebuah kampanye
+ */
+export async function getCampaignRecipientsClient(
+  campaignId: string,
+  organizationId?: string
+): Promise<WhatsAppClientResult<{
+  recipients: CampaignRecipientClientItem[];
+  metrics: {
+    total: number;
+    pending: number;
+    processing: number;
+    sent: number;
+    delivered: number;
+    failed: number;
+    skipped: number;
+  };
+}>> {
+  const baseUrl = getWorkerBaseUrl();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const headers = await getWorkerAuthHeaders(false);
+
+    const q = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+    const res = await fetch(`${baseUrl}/api/campaigns/${campaignId}/recipients${q}`, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return {
+        success: true,
+        data: {
+          recipients: json.data?.recipients || [],
+          metrics: json.data?.metrics || {
+            total: 0,
+            pending: 0,
+            processing: 0,
+            sent: 0,
+            delivered: 0,
+            failed: 0,
+            skipped: 0,
+          },
+        },
+      };
+    }
+    return { success: false, error: json.error || `HTTP ${res.status}` };
+  } catch (err: any) {
+    return { success: false, error: `Gagal memuat status penerima: ${err?.message || err}` };
+  }
+}
+
+/**
+ * Memicu scheduler antrean kampanye secara manual
+ */
+export async function triggerCampaignQueueClient(): Promise<WhatsAppClientResult> {
+  const baseUrl = getWorkerBaseUrl();
+
+  try {
+    const headers = await getWorkerAuthHeaders(false);
+    const res = await fetch(`${baseUrl}/api/campaigns/trigger`, {
+      method: 'POST',
+      headers,
+    });
+    const json = await res.json();
+    return { success: Boolean(json.success), message: json.message };
+  } catch (err: any) {
+    return { success: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Menghapus percakapan di backend worker
+ */
+export async function deleteConversationClient(
+  conversationId: string,
+  organizationId?: string
+): Promise<WhatsAppClientResult<{ message: string; deletedId?: string }>> {
+  const baseUrl = getWorkerBaseUrl();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const headers = await getWorkerAuthHeaders(true);
+
+    const q = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+    const res = await fetch(`${baseUrl}/api/conversations/${conversationId}${q}`, {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify({ organizationId }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return { success: true, data: json.data || json, message: json.message };
+    }
+    return { success: false, error: json.error || `HTTP ${res.status}` };
+  } catch (err: any) {
+    return { success: false, error: `Gagal menghapus percakapan: ${err?.message || err}` };
+  }
+}
+
+/**
+ * Menghapus anggota tim CS di backend worker (hanya admin/owner)
+ */
+export async function deleteTeamMemberClient(
+  memberId: string,
+  organizationId?: string
+): Promise<WhatsAppClientResult<{ message: string; deletedId?: string }>> {
+  const baseUrl = getWorkerBaseUrl();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const headers = await getWorkerAuthHeaders(true);
+
+    const q = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+    const res = await fetch(`${baseUrl}/api/team-members/${memberId}${q}`, {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify({ organizationId }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return { success: true, data: json.data || json, message: json.message };
+    }
+    return { success: false, error: json.error || `HTTP ${res.status}` };
+  } catch (err: any) {
+    return { success: false, error: `Gagal menghapus anggota tim: ${err?.message || err}` };
+  }
+}
+
+/**
+ * Menghapus kampanye di backend worker (hanya admin/owner)
+ */
+export async function deleteCampaignClient(
+  campaignId: string,
+  organizationId?: string
+): Promise<WhatsAppClientResult<{ message: string }>> {
+  const baseUrl = getWorkerBaseUrl();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const headers = await getWorkerAuthHeaders(true);
+
+    const q = organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : '';
+    const res = await fetch(`${baseUrl}/api/campaigns/${campaignId}${q}`, {
+      method: 'DELETE',
+      headers,
+      body: JSON.stringify({ organizationId }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return { success: true, data: json.data || json, message: json.message };
+    }
+    return { success: false, error: json.error || `HTTP ${res.status}` };
+  } catch (err: any) {
+    return { success: false, error: `Gagal menghapus kampanye: ${err?.message || err}` };
+  }
+}
+
+/**
+ * Memperbarui kampanye di backend worker (hanya jika draft atau scheduled)
+ */
+export async function updateCampaignClient(
+  campaignId: string,
+  params: {
+    name?: string;
+    messageBody?: string;
+    scheduledAt?: string | null;
+    status?: 'draft' | 'scheduled';
+    organizationId?: string;
+  }
+): Promise<WhatsAppClientResult<any>> {
+  const baseUrl = getWorkerBaseUrl();
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const headers = await getWorkerAuthHeaders(true);
+
+    const res = await fetch(`${baseUrl}/api/campaigns/${campaignId}`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(params),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return { success: true, data: json.data, message: json.message };
+    }
+    return { success: false, error: json.error || `HTTP ${res.status}` };
+  } catch (err: any) {
+    return { success: false, error: `Gagal memperbarui kampanye: ${err?.message || err}` };
+  }
+}
+

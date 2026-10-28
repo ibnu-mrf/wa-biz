@@ -342,12 +342,12 @@ export function ChatbotView({
     if (!customPrompt) setSimulatorInput('');
     setIsSimulating(true);
 
-    try {
-      const history = messages
-        .filter((m) => m.sender === 'user' || m.sender === 'bot')
-        .slice(-6)
-        .map((m) => ({ sender: m.sender as 'user' | 'bot', text: m.text }));
+    const history = messages
+      .filter((m) => m.sender === 'user' || m.sender === 'bot')
+      .slice(-6)
+      .map((m) => ({ sender: m.sender as 'user' | 'bot', text: m.text }));
 
+    try {
       const reply = await requestAiChatReply({
         organizationId: organizationId || 'preview-mode',
         userId: currentUserId,
@@ -374,7 +374,7 @@ export function ChatbotView({
       ]);
     } catch (err) {
       console.error('Error saat menghasilkan respon simulator:', err);
-      const localReply = processGroundedBotReply(textToSend, profile, rules, intentRules, escalation);
+      const localReply = processGroundedBotReply(textToSend, profile, rules, intentRules, escalation, history);
       setMessages((prev) => [
         ...prev,
         {

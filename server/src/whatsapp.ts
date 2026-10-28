@@ -10,7 +10,15 @@ import qrcode from 'qrcode';
 import fs from 'fs';
 import path from 'path';
 import { config } from './config';
-import { generateWhatsAppAiReply } from './ai';
+import { generateWhatsAppAiReply, getActiveProfile } from './ai';
+import {
+  persistInboundWhatsAppMessage,
+  persistOutboundWhatsAppMessage,
+  isWorkerSupabaseConfigured,
+} from './supabase';
+import { detectRegistrationIntent, executeRegistrationHandoff } from './handoff';
+import { campaignScheduler } from './campaigns';
+import { maskPhone } from './security';
 
 export function extractMessageText(message: any): string {
   if (!message) return '';
@@ -78,6 +86,7 @@ export class WhatsAppService {
   private reconnectTimer: NodeJS.Timeout | null = null;
   private isExplicitlyClosed = false;
   private processedMessageIds = new Set<string>();
+  private processedIdsFile = path.join(config.sessionDir, 'processed_message_ids.json');
   private socketConnectedAt = 0;
 
   constructor() {
@@ -85,6 +94,53 @@ export class WhatsAppService {
     if (!fs.existsSync(config.sessionDir)) {
       fs.mkdirSync(config.sessionDir, { recursive: true });
     }
+    this.loadProcessedMessageIds();
+  }
+
+  /**
+   * Muat riwayat ID pesan yang telah diproses dari disk agar tahan terhadap restart worker
+   */
+  private loadProcessedMessageIds(): void {
+    try {
+      if (fs.existsSync(this.processedIdsFile)) {
+        const raw = fs.readFileSync(this.processedIdsFile, 'utf8');
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          for (const id of arr) {
+            if (typeof id === 'string') {
+              this.processedMessageIds.add(id);
+            }
+          }
+          console.log(`[WhatsApp Dedup] Memuat ${this.processedMessageIds.size} ID pesan sebelumnya dari disk.`);
+        }
+      }
+    } catch (err: any) {
+      console.warn('[WhatsApp Dedup] Gagal membaca riwayat processed_message_ids:', err?.message || err);
+    }
+  }
+
+  /**
+   * Simpan ringkasan ID pesan terakhir ke disk
+   */
+  private saveProcessedMessageIds(): void {
+    try {
+      const arr = Array.from(this.processedMessageIds).slice(-1000);
+      fs.writeFileSync(this.processedIdsFile, JSON.stringify(arr), 'utf8');
+    } catch {
+      // Abaikan kegagalan tulis berkas
+    }
+  }
+
+  /**
+   * Tandai ID pesan sebagai telah diproses
+   */
+  private markMessageProcessed(messageId: string): void {
+    this.processedMessageIds.add(messageId);
+    if (this.processedMessageIds.size > 1500) {
+      const firstKey = this.processedMessageIds.values().next().value;
+      if (firstKey) this.processedMessageIds.delete(firstKey);
+    }
+    this.saveProcessedMessageIds();
   }
 
   public getState(): WhatsAppServiceState {
@@ -228,6 +284,9 @@ export class WhatsAppService {
           console.log(`Nama Profil: ${this.state.whatsappName || 'Akun Uji Coba'}`);
           console.log('Perangkat Tertaut (Companion Device) Aktif.');
           console.log('======================================================');
+
+          // Bangunkan scheduler antrean kampanye saat koneksi WhatsApp siap
+          campaignScheduler.triggerNow();
         }
 
         // E. Status Close (Koneksi Terputus)
@@ -310,15 +369,12 @@ export class WhatsAppService {
           const messageId = msg.key.id;
           if (!messageId) continue;
 
-          // C. Cegah pemrosesan duplikat pesan (deduplication)
+          // C. Cegah pemrosesan duplikat pesan (deduplication tahan restart worker)
           if (this.processedMessageIds.has(messageId)) {
+            console.log(`[Diagnostic] Mengabaikan event duplikat untuk pesan ID: ${messageId}`);
             continue;
           }
-          this.processedMessageIds.add(messageId);
-          if (this.processedMessageIds.size > 1000) {
-            const firstKey = this.processedMessageIds.values().next().value;
-            if (firstKey) this.processedMessageIds.delete(firstKey);
-          }
+          this.markMessageProcessed(messageId);
 
           // D. Ekstrak nomor pengirim dan nama profil
           const senderPhone = remoteJid.replace('@s.whatsapp.net', '').replace('@c.us', '').replace('@lid', '');
@@ -333,7 +389,7 @@ export class WhatsAppService {
           // F. Cek usia pesan (abaikan riwayat pesan offline lama > 2 menit)
           const msgTimestamp = Number(msg.messageTimestamp) * 1000;
           if (msgTimestamp && Date.now() - msgTimestamp > 120000) {
-            console.log(`[Diagnostic] Mengabaikan pesan offline lawas dari +${senderPhone} (Timestamp: ${new Date(msgTimestamp).toLocaleTimeString()}).`);
+            console.log(`[Diagnostic] Mengabaikan pesan offline lawas dari +${maskPhone(senderPhone)} (Timestamp: ${new Date(msgTimestamp).toLocaleTimeString()}).`);
             continue;
           }
 
@@ -347,13 +403,42 @@ export class WhatsAppService {
           // TAHAP 1: PESAN DITERIMA
           console.log('\n======================================================');
           console.log(`[Diagnostic Stage 1: Pesan Diterima] ID: ${messageId}`);
-          console.log(`Pengirim: +${senderPhone} (${senderName})`);
+          console.log(`Pengirim: +${maskPhone(senderPhone)} (${senderName})`);
           console.log(`Cuplikan Teks: "${textBody.length > 60 ? textBody.slice(0, 60) + '...' : textBody}"`);
           console.log(`Panjang Teks: ${textBody.length} karakter`);
           console.log(`Waktu: ${new Date().toLocaleTimeString()}`);
 
-          // TAHAP 2: AI DIPANGGIL
-          console.log(`[Diagnostic Stage 2: AI Dipanggil] Memproses pertanyaan via WABiz Grounded Engine...`);
+          // PERSISTENSI SUPABASE: Simpan kontak, percakapan, dan pesan masuk pelanggan
+          const targetOrgId = process.env.WORKER_ORG_ID?.trim() || getActiveProfile().orgId || '';
+          let inboundResult: { contactId: string; conversationId: string; messageId: string } | null = null;
+
+          if (targetOrgId && isWorkerSupabaseConfigured()) {
+            try {
+              inboundResult = await persistInboundWhatsAppMessage({
+                orgId: targetOrgId,
+                senderPhone,
+                senderName,
+                textBody,
+                messageTimestamp: msgTimestamp,
+                messageId,
+              });
+
+              if (inboundResult) {
+                console.log(
+                  `[Diagnostic Database: Inbound Disimpan] Kontak ID: ${inboundResult.contactId} | Percakapan ID: ${inboundResult.conversationId} | Pesan ID: ${inboundResult.messageId}`
+                );
+              } else {
+                console.warn(`[Diagnostic Database: Inbound Gagal] Gagal mencatat pesan masuk ke Supabase.`);
+              }
+            } catch (dbInboundErr: any) {
+              console.error(`[Diagnostic Database: Error Inbound] Exception:`, dbInboundErr?.message || dbInboundErr);
+            }
+          } else {
+            console.log('[Diagnostic Database: Dilewati] Supabase belum dikonfigurasi atau WORKER_ORG_ID belum diset.');
+          }
+
+          // TAHAP 2: DETEKSI INTENT PENDAFTARAN & GENERASI BALASAN
+          console.log(`[Diagnostic Stage 2: Evaluasi Intent & AI] Memproses pesan via WABiz Engine...`);
 
           // Tampilkan indikator mengetik (composing) di WhatsApp pengirim
           try {
@@ -363,10 +448,44 @@ export class WhatsAppService {
           }
 
           let aiResult: { text: string; source: string; isEscalated?: boolean } | null = null;
-          try {
-            aiResult = await generateWhatsAppAiReply(textBody, senderPhone);
-          } catch (aiErr: any) {
-            console.error(`[Diagnostic Stage 2: Error AI] Exception saat memproses balasan:`, aiErr?.message || aiErr);
+
+          // A. Deteksi niat pendaftaran berbasis AI & konteks percakapan
+          const regIntent = detectRegistrationIntent(textBody);
+          console.log(`[Diagnostic Stage 2: Intent Pendaftaran] Intent: ${regIntent.intent} (Confidence: ${regIntent.confidence})`);
+
+          // B. Jika Niat Kuat Pendaftaran terdeteksi dan percakapan terhubung ke Supabase
+          if (regIntent.intent === 'registration_intent' && targetOrgId && inboundResult && inboundResult.conversationId) {
+            console.log(`[Diagnostic Stage 2: CS Handoff] Niat pendaftaran kuat terdeteksi. Menjalankan alur handoff CS Pendaftaran...`);
+            try {
+              const handoffRes = await executeRegistrationHandoff({
+                orgId: targetOrgId,
+                conversationId: inboundResult.conversationId,
+                customerPhone: senderPhone,
+                customerName: senderName,
+                promptText: textBody,
+                profile: getActiveProfile(),
+                sendWhatsAppMessageFn: async (toPhone: string, text: string) => {
+                  return this.sendMessage(toPhone, text);
+                },
+              });
+
+              aiResult = {
+                text: handoffRes.replyText,
+                source: handoffRes.success ? 'registration_handoff_cs' : 'registration_handoff_fallback',
+                isEscalated: true,
+              };
+            } catch (handoffErr: any) {
+              console.error('[Diagnostic Stage 2: Error Handoff] Exception saat handoff pendaftaran:', handoffErr?.message || handoffErr);
+            }
+          }
+
+          // C. Jika belum ditangani oleh alur handoff pendaftaran, proses melalui mesin percakapan AI
+          if (!aiResult) {
+            try {
+              aiResult = await generateWhatsAppAiReply(textBody, senderPhone);
+            } catch (aiErr: any) {
+              console.error(`[Diagnostic Stage 2: Error AI] Exception saat memproses balasan:`, aiErr?.message || aiErr);
+            }
           }
 
           if (!aiResult || !aiResult.text) {
@@ -397,10 +516,42 @@ export class WhatsAppService {
             const sent = await sock.sendMessage(remoteJid, { text: aiResult.text });
             const outMessageId = sent?.key?.id;
             console.log(`[Diagnostic Stage 5: Pengiriman Sukses] Balasan terkirim ke +${senderPhone}! (Out Message ID: ${outMessageId || 'N/A'})`);
+
+            // PERSISTENSI SUPABASE: Simpan balasan AI keluar ke thread percakapan yang sama
+            if (targetOrgId && inboundResult && inboundResult.conversationId && isWorkerSupabaseConfigured()) {
+              try {
+                const outboundResult = await persistOutboundWhatsAppMessage(
+                  targetOrgId,
+                  inboundResult.conversationId,
+                  aiResult.text,
+                  'bot'
+                );
+                if (outboundResult) {
+                  console.log(`[Diagnostic Database: Outbound Disimpan] Balasan AI berhasil dicatat di Supabase! (Pesan ID: ${outboundResult.messageId})`);
+                }
+              } catch (dbOutboundErr: any) {
+                console.error(`[Diagnostic Database: Error Outbound] Gagal mencatat balasan AI:`, dbOutboundErr?.message || dbOutboundErr);
+              }
+            }
+
             console.log('======================================================\n');
           } catch (sendErr: any) {
             console.error(`[Diagnostic Stage 5: Pengiriman Gagal] Gagal mengirim balasan ke +${senderPhone}:`, sendErr?.message || sendErr);
             console.log('======================================================\n');
+          }
+        }
+      });
+
+      // 4. Event: Pembaruan Status Pesan / Tanda Terima Pengiriman (Delivery Receipt)
+      sock.ev.on('messages.update', async (updates) => {
+        for (const u of updates) {
+          const msgId = u.key?.id;
+          const status = u.update?.status;
+          if (msgId && status !== undefined && status !== null) {
+            // Nilai status Baileys: 3 = DELIVERY_ACK (sampai di perangkat penerima), 4 = READ (dibaca)
+            if (status === 3 || status === 4 || String(status) === 'DELIVERY_ACK' || String(status) === 'READ') {
+              campaignScheduler.handleBaileysReceipt(msgId, 'delivered').catch(() => {});
+            }
           }
         }
       });
@@ -455,7 +606,7 @@ export class WhatsAppService {
     const targetJid = `${cleanNumber}@s.whatsapp.net`;
 
     try {
-      console.log(`[WhatsApp Send] Mengirim pesan uji coba ke +${cleanNumber}...`);
+      console.log(`[WhatsApp Send] Mengirim pesan uji coba ke +${maskPhone(cleanNumber)}...`);
       const sent = await this.socket.sendMessage(targetJid, { text });
       const messageId = sent?.key.id || undefined;
       console.log(`[WhatsApp Send] Pesan berhasil terkirim! (Message ID: ${messageId})`);

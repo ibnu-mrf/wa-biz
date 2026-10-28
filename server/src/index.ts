@@ -1,6 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import qrcode from 'qrcode';
-import { config } from './config';
+import { config, validateWorkerConfig } from './config';
 import { whatsappService } from './whatsapp';
 import {
   getActiveProfile,
@@ -9,7 +9,34 @@ import {
   setActiveChatbotConfig,
   generateWhatsAppAiReply,
 } from './ai';
-import { loadProfileFromSupabase, isWorkerSupabaseConfigured } from './supabase';
+import {
+  loadProfileFromSupabase,
+  isWorkerSupabaseConfigured,
+  deleteConversation,
+  deleteTeamMember,
+} from './supabase';
+import { retryRegistrationHandoff } from './handoff';
+import {
+  campaignScheduler,
+  createPersistentCampaign,
+  cancelCampaign,
+  deleteCampaign,
+  updateCampaign,
+  getCampaignRecipients,
+} from './campaigns';
+import {
+  authenticateAndAuthorize,
+  globalRateLimiter,
+  sensitiveRateLimiter,
+  maskPhone,
+} from './security';
+import { tenantManager } from './multiTenant';
+import { getProvider, getProviderReadiness } from './providers';
+import {
+  handleMetaWebhookVerification,
+  handleMetaWebhookPost,
+  handleOpenWaWebhookPost,
+} from './webhook';
 
 const app = express();
 
@@ -22,8 +49,8 @@ app.use((req: Request, res: Response, next: NextFunction): void => {
 
   if (origin && config.allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, Authorization, Accept');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key, Authorization, Accept, x-supabase-auth, x-organization-id');
     res.setHeader('Access-Control-Max-Age', '86400');
   }
 
@@ -40,23 +67,57 @@ app.use((req: Request, res: Response, next: NextFunction): void => {
   next();
 });
 
-app.use(express.json());
-
 // ==========================================
-// 2. MIDDLEWARE AUTENTIKASI LOKAL (API KEY)
+// 2. PARSING PAYLOAD & BATASAN UKURAN (DOS HARDENING)
 // ==========================================
-function requireLocalApiKey(req: Request, res: Response, next: NextFunction): void {
-  const headerKey = req.headers['x-api-key'] || req.headers['authorization']?.replace(/^Bearer\s+/i, '');
+// 2A. Parser khusus Webhook Meta & OpenWA:
+// Batas maksimum 2 MB dan menyimpan buffer mentah (rawBody) secara utuh untuk verifikasi signature.
+// Didaftarkan SEBELUM parser reguler agar parser reguler 256 KB tidak mengonsumsi body webhook terlebih dahulu.
+const webhookPaths = ['/api/webhooks/whatsapp', '/api/webhooks/openwa'];
 
-  if (!headerKey || headerKey !== config.localApiKey) {
-    res.status(401).json({
-      error: 'Unauthorized: Kunci API lokal (x-api-key atau Bearer token) wajib disertakan dan harus cocok dengan LOCAL_API_KEY.',
+app.use(
+  webhookPaths,
+  express.json({
+    limit: '2mb',
+    verify: (req: any, _res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
+
+// 2B. Parser reguler untuk seluruh endpoint lainnya:
+// Dibatasi ketat maksimum 256 KB untuk mencegah serangan DoS / payload bomb.
+app.use(
+  express.json({
+    limit: '256kb',
+  })
+);
+
+// Penanganan error payload terlalu besar (HTTP 413) atau JSON rusak (HTTP 400)
+app.use((err: any, req: Request, res: Response, next: NextFunction): void => {
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+    const isWebhook = webhookPaths.some((p) => req.path.startsWith(p));
+    res.status(413).json({
+      success: false,
+      error: `Payload Too Large: Ukuran body data melebihi batas maksimal yang diizinkan (${isWebhook ? '2 MB' : '256 KB'}).`,
     });
     return;
   }
+  if (err instanceof SyntaxError && 'body' in err) {
+    res.status(400).json({
+      success: false,
+      error: 'Bad Request: Format payload JSON tidak valid.',
+    });
+    return;
+  }
+  next(err);
+});
 
-  next();
-}
+// Terapkan rate limiter global ke seluruh endpoint /api
+app.use('/api', globalRateLimiter);
+
+// Alias kompatibilitas backward jika ada helper internal lama
+const requireLocalApiKey = authenticateAndAuthorize({ requiredRole: 'member', enforceWorkerOrg: true });
 
 // ==========================================
 // 2. ENDPOINT KESEHATAN SISTEM
@@ -71,9 +132,25 @@ app.get('/health', (_req: Request, res: Response) => {
 });
 
 // ==========================================
+// 2B. ENDPOINT WEBHOOK META WHATSAPP CLOUD API
+// ==========================================
+// Endpoint publik untuk Meta Webhook. Proteksi:
+// - GET: hub.mode=subscribe & hub.verify_token matching
+// - POST: Validasi tanda tangan kriptografis X-Hub-Signature-256
+app.get('/api/webhooks/whatsapp', handleMetaWebhookVerification);
+app.post('/api/webhooks/whatsapp', handleMetaWebhookPost);
+
+// ==========================================
+// 2C. ENDPOINT WEBHOOK OPENWA (TERISOLASI)
+// ==========================================
+// Endpoint publik untuk webhook OpenWA. Proteksi:
+// - POST: Validasi tanda tangan kriptografis X-OpenWA-Signature (HMAC-SHA256)
+app.post('/api/webhooks/openwa', handleOpenWaWebhookPost);
+
+// ==========================================
 // 3. ENDPOINT STATUS SESI WHATSAPP (TERPROTEKSI)
 // ==========================================
-app.get('/api/status', requireLocalApiKey, (_req: Request, res: Response) => {
+app.get('/api/status', authenticateAndAuthorize({ requiredRole: 'member', enforceWorkerOrg: true }), (_req: Request, res: Response) => {
   const state = whatsappService.getState();
   res.json({
     success: true,
@@ -85,7 +162,7 @@ app.get('/api/status', requireLocalApiKey, (_req: Request, res: Response) => {
 // 4. ENDPOINT PENGAMBILAN QR (TERPROTEKSI)
 // ==========================================
 // Menghasilkan payload data QR untuk pairing manual tanpa mencatat QR ke file log publik
-app.get('/api/qr', requireLocalApiKey, async (req: Request, res: Response) => {
+app.get('/api/qr', authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
   let qrInfo = whatsappService.getRawQr();
   let state = whatsappService.getState();
 
@@ -100,21 +177,16 @@ app.get('/api/qr', requireLocalApiKey, async (req: Request, res: Response) => {
     return;
   }
 
-  // Jika QR belum ada, atau sudah kedaluwarsa, dan status socket sedang mati / timeout
-  if ((!qrInfo.qr || !qrInfo.isFresh) && (state.status === 'disconnected' || state.status === 'qr_expired' || state.status === 'error')) {
-    console.log('[API Diagnostic] GET /api/qr: Sesi mati atau QR kedaluwarsa. Memulai inisialisasi sesi Baileys baru...');
-    await whatsappService.start(true);
-    // Beri waktu agar server WhatsApp menerbitkan QR baru
-    await new Promise((r) => setTimeout(r, 800));
-    qrInfo = whatsappService.getRawQr();
-    state = whatsappService.getState();
-  }
-
-  if (!qrInfo.qr) {
+  // P2.1: GET bersifat read-only tanpa efek samping koneksi atau pembuatan socket.
+  // Jika QR belum tersedia atau kedaluwarsa, kembalikan status tanpa memanggil whatsappService.start().
+  if (!qrInfo.qr || !qrInfo.isFresh) {
+    const isExpired = Boolean(qrInfo.qr && !qrInfo.isFresh);
     res.status(404).json({
       success: false,
-      status: state.status,
-      message: 'QR Code sedang disiapkan oleh server WhatsApp. Silakan segarkan dalam 1-2 detik.',
+      status: isExpired ? 'qr_expired' : state.status,
+      message: isExpired
+        ? 'QR Code telah kedaluwarsa. Silakan inisialisasi koneksi ulang melalui aksi eksplisit.'
+        : 'QR Code belum tersedia atau sesi belum dimulai. Silakan inisialisasi koneksi melalui aksi eksplisit.',
       qrCount: state.qrCount,
       reconnectAttempts: state.reconnectAttempts,
     });
@@ -142,88 +214,12 @@ app.get('/api/qr', requireLocalApiKey, async (req: Request, res: Response) => {
   }
 });
 
-// Endpoint HTML sederhana untuk memindai QR secara lokal di browser komputer
-app.get('/qr-view', async (req: Request, res: Response) => {
-  const apiKey = (req.query.key as string) || '';
-  if (apiKey !== config.localApiKey) {
-    res.status(401).send('<h3>401 Unauthorized</h3><p>Sertakan parameter query ?key=LOCAL_API_KEY untuk melihat QR pairing lokal.</p>');
-    return;
-  }
-
-  let qrInfo = whatsappService.getRawQr();
-  let state = whatsappService.getState();
-
-  if (state.status === 'connected') {
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-        <head><title>WABiz WhatsApp - Terhubung</title></head>
-        <body style="font-family: sans-serif; text-align: center; padding: 40px;">
-          <h2 style="color: #059669;">✓ WhatsApp Terhubung!</h2>
-          <p>Nomor: <b>${state.phoneNumber || 'N/A'}</b></p>
-          <p>Nama Akun: <b>${state.whatsappName || 'N/A'}</b></p>
-          <p style="color: #64748b;">Sesi staging aktif sebagai Perangkat Tertaut (Companion Device).</p>
-        </body>
-      </html>
-    `);
-    return;
-  }
-
-  if ((!qrInfo.qr || !qrInfo.isFresh) && (state.status === 'disconnected' || state.status === 'qr_expired' || state.status === 'error')) {
-    await whatsappService.start(true);
-    await new Promise((r) => setTimeout(r, 800));
-    qrInfo = whatsappService.getRawQr();
-    state = whatsappService.getState();
-  }
-
-  if (!qrInfo.qr) {
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>WABiz WhatsApp - Menunggu QR</title>
-          <meta http-equiv="refresh" content="2">
-        </head>
-        <body style="font-family: sans-serif; text-align: center; padding: 40px;">
-          <h2>Menyiapkan QR Code Baru dari WhatsApp...</h2>
-          <p style="color: #64748b;">Status: <b>${state.status}</b></p>
-          <p>Halaman ini akan me-refresh otomatis setiap 2 detik.</p>
-        </body>
-      </html>
-    `);
-    return;
-  }
-
-  qrcode.toDataURL(qrInfo.qr, { margin: 2, scale: 8 }, (err, url) => {
-    if (err) {
-      res.status(500).send('Gagal membuat gambar QR');
-      return;
-    }
-    res.send(`
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>WABiz WhatsApp QR Staging Pairing</title>
-          <meta http-equiv="refresh" content="15">
-        </head>
-        <body style="font-family: sans-serif; text-align: center; padding: 30px; background-color: #f8fafc;">
-          <div style="max-width: 420px; margin: 0 auto; background: white; padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);">
-            <h2 style="margin-top: 0; color: #1e293b;">Tautkan WhatsApp Uji Coba (QR #${qrInfo.count})</h2>
-            <p style="color: #475569; font-size: 14px;">Buka WhatsApp di ponsel uji coba &gt; <b>Perangkat Tertaut</b> &gt; <b>Tautkan Perangkat</b>, lalu scan kode di bawah:</p>
-            <img src="${url}" alt="WhatsApp QR Code" style="border: 1px solid #e2e8f0; border-radius: 8px; width: 280px; height: 280px;" />
-            <p style="color: #94a3b8; font-size: 12px; margin-top: 16px;">Dibuat: ${qrInfo.generatedAt?.toLocaleTimeString() || '-'} (Usia: ${qrInfo.ageSeconds}s)<br>Auto-refresh setiap 15 detik.</p>
-          </div>
-        </body>
-      </html>
-    `);
-  });
-});
 
 // ==========================================
 // 5. ENDPOINT PENGIRIMAN PESAN UJI COBA (TERPROTEKSI)
 // ==========================================
-app.post('/api/send', requireLocalApiKey, async (req: Request, res: Response) => {
-  const { to, message } = req.body;
+app.post('/api/send', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'member', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const { to, message, organizationId } = req.body;
 
   if (!to || !message) {
     res.status(400).json({
@@ -233,26 +229,46 @@ app.post('/api/send', requireLocalApiKey, async (req: Request, res: Response) =>
     return;
   }
 
-  const result = await whatsappService.sendMessage(to, message);
+  const targetOrgId = req.authenticatedUser?.organizationId || organizationId || config.workerOrgId;
+  const tenantCheck = tenantManager.validateTenantAccess(targetOrgId);
+  if (!tenantCheck.allowed) {
+    res.status(403).json({ success: false, error: tenantCheck.reason });
+    return;
+  }
+
+  console.log(`[API Send] Mengirim pesan ke ${maskPhone(to)} (Org: ${targetOrgId})...`);
+  const provider = await getProvider(targetOrgId);
+  const result = await provider.sendMessage({
+    organizationId: targetOrgId,
+    recipientPhone: to,
+    text: message,
+  });
+
   if (!result.success) {
-    res.status(500).json(result);
+    res.status(500).json({
+      success: false,
+      error: result.error,
+      errorCode: result.errorCode,
+      provider: result.provider,
+    });
     return;
   }
 
   res.json({
     success: true,
     data: {
-      to,
-      messageId: result.messageId,
-      sentAt: new Date().toISOString(),
+      to: maskPhone(to),
+      provider: result.provider,
+      messageId: result.providerMessageId,
+      sentAt: result.timestamp,
     },
   });
 });
 
 // ==========================================
-// 6. ENDPOINT REKONEKSI & DISCONNECT (TERPROTEKSI)
+// 6. ENDPOINT REKONEKSI & DISCONNECT (TERPROTEKSI ADMIN)
 // ==========================================
-app.post('/api/reconnect', requireLocalApiKey, async (_req: Request, res: Response) => {
+app.post('/api/reconnect', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (_req: Request, res: Response) => {
   console.log('[API Diagnostic] Permintaan rekoneksi manual diterima via POST /api/reconnect.');
   await whatsappService.start(true);
   res.json({
@@ -261,7 +277,7 @@ app.post('/api/reconnect', requireLocalApiKey, async (_req: Request, res: Respon
   });
 });
 
-app.post('/api/disconnect', requireLocalApiKey, async (req: Request, res: Response) => {
+app.post('/api/disconnect', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
   const deleteSession = Boolean(req.body.deleteSession);
   console.log(`[API] Permintaan disconnect diterima (deleteSession: ${deleteSession}).`);
   await whatsappService.disconnect(deleteSession);
@@ -274,7 +290,7 @@ app.post('/api/disconnect', requireLocalApiKey, async (req: Request, res: Respon
 // ==========================================
 // 7. ENDPOINT MANAJEMEN BASIS DATA AI (TERPROTEKSI)
 // ==========================================
-app.get('/api/ai/config', requireLocalApiKey, (_req: Request, res: Response) => {
+app.get('/api/ai/config', authenticateAndAuthorize({ requiredRole: 'member', enforceWorkerOrg: true }), (_req: Request, res: Response) => {
   res.json({
     success: true,
     profile: getActiveProfile(),
@@ -282,12 +298,29 @@ app.get('/api/ai/config', requireLocalApiKey, (_req: Request, res: Response) => 
   });
 });
 
-app.post('/api/ai/config', requireLocalApiKey, (req: Request, res: Response) => {
-  const { profile, config: botConfig } = req.body;
-  if (profile) setActiveProfile(profile);
+app.post('/api/ai/config', authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), (req: Request, res: Response) => {
+  const { profile, config: botConfig, organizationId } = req.body;
+  const targetOrgId = req.authenticatedUser?.organizationId || organizationId || config.workerOrgId;
+  const tenantCheck = tenantManager.validateTenantAccess(targetOrgId);
+  if (!tenantCheck.allowed) {
+    res.status(403).json({ success: false, error: tenantCheck.reason });
+    return;
+  }
+
+  if (profile) {
+    const profileOrgId = typeof profile.orgId === 'string' ? profile.orgId.trim() : '';
+    if (!profileOrgId || profileOrgId !== targetOrgId) {
+      res.status(403).json({
+        success: false,
+        error: 'Forbidden: ID organisasi pada profil wajib diisi dan harus cocok dengan organisasi target worker.',
+      });
+      return;
+    }
+    setActiveProfile(profile);
+  }
   if (botConfig) setActiveChatbotConfig(botConfig);
 
-  console.log('[API] Konfigurasi basis data AI dan profil lembaga berhasil disinkronisasi.');
+  console.log(`[API] Konfigurasi basis data AI dan profil lembaga untuk org ${targetOrgId} berhasil disinkronisasi.`);
   res.json({
     success: true,
     message: 'Konfigurasi profil organisasi dan chatbot AI berhasil diperbarui.',
@@ -297,7 +330,7 @@ app.post('/api/ai/config', requireLocalApiKey, (req: Request, res: Response) => 
 });
 
 // Endpoint pengujian simulasi AI lokal secara aman
-app.post('/api/ai/simulate', requireLocalApiKey, async (req: Request, res: Response) => {
+app.post('/api/ai/simulate', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'member', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
   const { prompt, senderPhone } = req.body;
   if (!prompt || typeof prompt !== 'string') {
     res.status(400).json({ success: false, error: 'Parameter "prompt" wajib disertakan.' });
@@ -310,7 +343,7 @@ app.post('/api/ai/simulate', requireLocalApiKey, async (req: Request, res: Respo
     success: true,
     data: {
       prompt,
-      senderPhone: phone,
+      senderPhone: maskPhone(phone),
       replyText: reply.text,
       source: reply.source,
       isEscalated: reply.isEscalated,
@@ -318,16 +351,318 @@ app.post('/api/ai/simulate', requireLocalApiKey, async (req: Request, res: Respo
   });
 });
 
+// Endpoint untuk melakukan retry pengalihan pendaftar ke CS (dari dashboard)
+app.post('/api/handoff/retry', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'member', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const { conversationId, organizationId } = req.body;
+  if (!conversationId) {
+    res.status(400).json({ success: false, error: 'Parameter "conversationId" wajib disertakan.' });
+    return;
+  }
+
+  const orgId = req.authenticatedUser?.organizationId || organizationId || config.workerOrgId || getActiveProfile().orgId;
+  const tenantCheck = tenantManager.validateTenantAccess(orgId);
+  if (!tenantCheck.allowed) {
+    res.status(403).json({ success: false, error: tenantCheck.reason });
+    return;
+  }
+
+  try {
+    const result = await retryRegistrationHandoff(
+      orgId,
+      conversationId,
+      async (to, msg) => whatsappService.sendMessage(to, msg),
+      getActiveProfile()
+    );
+
+    res.json({
+      success: result.success,
+      data: result,
+      error: result.error,
+    });
+  } catch (err: any) {
+    console.error('[API] Error saat retry handoff:', err?.message || err);
+    res.status(500).json({
+      success: false,
+      error: `Gagal menjalankan retry handoff: ${err?.message || err}`,
+    });
+  }
+});
+
 // ==========================================
-// 8. INISIALISASI SERVER & SHUTDOWN HANDLER
+// 8. ENDPOINT MANAJEMEN KAMPANYE PERSISTEN (TERPROTEKSI ADMIN)
 // ==========================================
+// Mengambil status kesiapan gateway/provider untuk pengiriman kampanye (terproteksi member)
+app.get('/api/campaigns/gateway-status', authenticateAndAuthorize({ requiredRole: 'member', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const orgId = req.authenticatedUser?.organizationId || ((req.query.organizationId as string) || config.workerOrgId || getActiveProfile().orgId);
+
+  const tenantCheck = tenantManager.validateTenantAccess(orgId);
+  if (!tenantCheck.allowed) {
+    res.status(403).json({ success: false, error: tenantCheck.reason });
+    return;
+  }
+
+  try {
+    const readiness = await getProviderReadiness(orgId);
+    res.json({
+      success: true,
+      data: readiness,
+    });
+  } catch (err: any) {
+    res.status(500).json({
+      success: false,
+      error: `Gagal membaca status gateway: ${err?.message || err}`,
+    });
+  }
+});
+
+// Membuat kampanye siaran baru dengan antrean persisten dan deduplikasi
+app.post('/api/campaigns/create', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const {
+    organizationId,
+    name,
+    messageBody,
+    senderPhone,
+    targetSegment,
+    deliveryMode,
+    scheduledAt,
+    contactIds,
+  } = req.body;
+
+  const orgId = req.authenticatedUser?.organizationId || organizationId || config.workerOrgId || getActiveProfile().orgId;
+  const tenantCheck = tenantManager.validateTenantAccess(orgId);
+  if (!tenantCheck.allowed) {
+    res.status(403).json({ success: false, error: tenantCheck.reason });
+    return;
+  }
+
+  const result = await createPersistentCampaign(orgId, {
+    name,
+    messageBody,
+    senderPhone,
+    targetSegment,
+    deliveryMode: deliveryMode === 'scheduled' ? 'scheduled' : 'now',
+    scheduledAt,
+    contactIds,
+  });
+
+  if (!result.success) {
+    res.status(400).json(result);
+    return;
+  }
+
+  res.json({
+    success: true,
+    data: result,
+  });
+});
+
+// Membatalkan kampanye terjadwal yang belum selesai diproses
+app.post('/api/campaigns/:id/cancel', authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const campaignId = req.params.id as string;
+  const orgId = req.authenticatedUser?.organizationId || (req.body.organizationId || config.workerOrgId || getActiveProfile().orgId) as string;
+
+  const tenantCheck = tenantManager.validateTenantAccess(orgId);
+  if (!tenantCheck.allowed) {
+    res.status(403).json({ success: false, error: tenantCheck.reason });
+    return;
+  }
+
+  const result = await cancelCampaign(orgId, campaignId);
+  if (!result.success) {
+    res.status(400).json(result);
+    return;
+  }
+
+  res.json({
+    success: true,
+    data: result,
+  });
+});
+
+// Mengambil daftar penerima dan status delivery per kontak untuk kampanye tertentu
+app.get('/api/campaigns/:id/recipients', authenticateAndAuthorize({ requiredRole: 'member', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const campaignId = req.params.id as string;
+  const orgId = req.authenticatedUser?.organizationId || (req.query.organizationId || config.workerOrgId || getActiveProfile().orgId) as string;
+
+  const tenantCheck = tenantManager.validateTenantAccess(orgId);
+  if (!tenantCheck.allowed) {
+    res.status(403).json({ success: false, error: tenantCheck.reason });
+    return;
+  }
+
+  const result = await getCampaignRecipients(orgId, campaignId);
+  if (!result.success) {
+    res.status(400).json(result);
+    return;
+  }
+
+  res.json({
+    success: true,
+    data: result,
+  });
+});
+
+// Menghapus percakapan secara aman (role member ke atas, dibatasi tenant)
+app.delete('/api/conversations/:id', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'member', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const conversationId = req.params.id as string;
+  const orgId = req.authenticatedUser?.organizationId || ((req.query.organizationId || req.body?.organizationId || config.workerOrgId || getActiveProfile().orgId) as string);
+
+  if (!conversationId) {
+    res.status(400).json({ success: false, error: 'Parameter "conversationId" wajib disertakan.' });
+    return;
+  }
+
+  const tenantCheck = tenantManager.validateTenantAccess(orgId);
+  if (!tenantCheck.allowed) {
+    res.status(403).json({ success: false, error: tenantCheck.reason });
+    return;
+  }
+
+  const result = await deleteConversation(orgId, conversationId);
+  if (!result.success) {
+    const statusCode = result.notFound ? 404 : 400;
+    res.status(statusCode).json(result);
+    return;
+  }
+
+  res.json({
+    success: true,
+    data: result,
+    message: result.message,
+  });
+});
+
+// Menghapus anggota tim CS secara aman (hanya role admin/owner, dibatasi tenant)
+app.delete('/api/team-members/:id', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const memberId = req.params.id as string;
+  const orgId = req.authenticatedUser?.organizationId || ((req.query.organizationId || req.body?.organizationId || config.workerOrgId || getActiveProfile().orgId) as string);
+
+  if (!memberId) {
+    res.status(400).json({ success: false, error: 'Parameter "memberId" wajib disertakan.' });
+    return;
+  }
+
+  const tenantCheck = tenantManager.validateTenantAccess(orgId);
+  if (!tenantCheck.allowed) {
+    res.status(403).json({ success: false, error: tenantCheck.reason });
+    return;
+  }
+
+  const result = await deleteTeamMember(orgId, memberId);
+  if (!result.success) {
+    const statusCode = result.notFound ? 404 : 400;
+    res.status(statusCode).json(result);
+    return;
+  }
+
+  res.json({
+    success: true,
+    data: result,
+    message: result.message,
+  });
+});
+
+// Menghapus kampanye persisten secara aman (hanya role admin/owner, dilarang jika running)
+app.delete('/api/campaigns/:id', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const campaignId = req.params.id as string;
+  const orgId = req.authenticatedUser?.organizationId || ((req.query.organizationId || req.body?.organizationId || config.workerOrgId || getActiveProfile().orgId) as string);
+
+  const tenantCheck = tenantManager.validateTenantAccess(orgId);
+  if (!tenantCheck.allowed) {
+    res.status(403).json({ success: false, error: tenantCheck.reason });
+    return;
+  }
+
+  const result = await deleteCampaign(orgId, campaignId);
+  if (!result.success) {
+    res.status(result.statusCode || 400).json(result);
+    return;
+  }
+
+  res.json({
+    success: true,
+    data: result,
+    message: result.message,
+  });
+});
+
+// Memperbarui kampanye (hanya draft atau scheduled, dilarang jika running/completed)
+app.put('/api/campaigns/:id', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const campaignId = req.params.id as string;
+  const orgId = req.authenticatedUser?.organizationId || ((req.body?.organizationId || config.workerOrgId || getActiveProfile().orgId) as string);
+
+  const tenantCheck = tenantManager.validateTenantAccess(orgId);
+  if (!tenantCheck.allowed) {
+    res.status(403).json({ success: false, error: tenantCheck.reason });
+    return;
+  }
+
+  const { name, messageBody, scheduledAt, status } = req.body;
+  const result = await updateCampaign(orgId, campaignId, { name, messageBody, scheduledAt, status });
+  if (!result.success) {
+    res.status(result.statusCode || 400).json(result);
+    return;
+  }
+
+  res.json({
+    success: true,
+    data: result.data,
+    message: result.message,
+  });
+});
+
+// Memicu siklus pemrosesan antrean kampanye secara manual
+app.post('/api/campaigns/trigger', authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), (_req: Request, res: Response) => {
+  campaignScheduler.triggerNow();
+  res.json({ success: true, message: 'Siklus scheduler antrean kampanye dipicu.' });
+});
+
+// Fallback error-handling middleware di akhir pipeline route untuk menangani error tak terduga
+app.use((err: any, req: Request, res: Response, _next: NextFunction): void => {
+  if (err && (err.type === 'entity.too.large' || err.status === 413)) {
+    const isWebhook = webhookPaths.some((p) => req.path.startsWith(p));
+    res.status(413).json({
+      success: false,
+      error: `Payload Too Large: Ukuran body data melebihi batas maksimal yang diizinkan (${isWebhook ? '2 MB' : '256 KB'}).`,
+    });
+    return;
+  }
+  if (err instanceof SyntaxError && 'body' in err) {
+    res.status(400).json({
+      success: false,
+      error: 'Bad Request: Format payload JSON tidak valid.',
+    });
+    return;
+  }
+  console.error('[Unhandled Route Error]', err);
+  res.status(err.status || 500).json({
+    success: false,
+    error: err.message || 'Internal Server Error',
+  });
+});
+
+// ==========================================
+// 9. INISIALISASI SERVER & SHUTDOWN HANDLER
+// ==========================================
+// Validasi konfigurasi keamanan wajib sebelum membuka listener
+try {
+  validateWorkerConfig(config);
+} catch (configErr: any) {
+  console.error(`[FATAL STARTUP ERROR] ${configErr?.message || configErr}`);
+  process.exit(1);
+}
+
 const server = app.listen(config.port, config.host, () => {
   console.log('======================================================');
   console.log(`[WABiz WhatsApp Worker Staging] Berjalan pada http://${config.host}:${config.port}`);
   console.log(`Autentikasi API Key Lokal: Aktif`);
   console.log(`CORS Origins Diizinkan: ${config.allowedOrigins.join(', ')}`);
   console.log(`Penyimpanan Sesi: ${config.sessionDir}`);
+  console.log(`Auto-Start WhatsApp: ${config.autoStartWhatsApp ? 'Aktif (true)' : 'Nonaktif (false - Safe Mode)'}`);
   console.log('======================================================');
+
+  // Mulai mesin antrean pengiriman persisten
+  campaignScheduler.start(4000);
 
   // Diagnostik status Supabase & WORKER_ORG_ID saat startup (aman, tanpa secret/isi profil)
   const isSupabaseConfigured = isWorkerSupabaseConfigured();
@@ -354,15 +689,21 @@ const server = app.listen(config.port, config.host, () => {
     console.log('[Startup] Status profil: Supabase tidak dikonfigurasi. Profil dimuat dari sinkronisasi Expo.');
   }
 
-  // Mulai socket WhatsApp otomatis saat worker dijalankan
-  whatsappService.start().catch((err) => {
-    console.error('[WhatsApp Init Error]', err);
-  });
+  // Mulai socket WhatsApp hanya jika diizinkan secara eksplisit (AUTO_START_WHATSAPP=true)
+  if (config.autoStartWhatsApp) {
+    console.log('[Startup] AUTO_START_WHATSAPP=true terdeteksi. Memulai socket WhatsApp Baileys...');
+    whatsappService.start().catch((err) => {
+      console.error('[WhatsApp Init Error]', err);
+    });
+  } else {
+    console.log('[Startup] AUTO_START_WHATSAPP=false (default). Backend berjalan dalam mode API tanpa memulai socket WhatsApp.');
+  }
 });
 
 // Graceful Shutdown
 function handleShutdown(signal: string) {
   console.log(`\n[Shutdown] Menerima sinyal ${signal}. Menutup koneksi WhatsApp dan server HTTP secara aman...`);
+  campaignScheduler.stop();
   whatsappService
     .disconnect(false)
     .catch((err) => {

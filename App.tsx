@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -22,10 +22,15 @@ import {
   INITIAL_CONVERSATIONS,
   Conversation,
 } from './src/components/ConversationsView';
-import { ContactsView, INITIAL_CONTACTS, Contact } from './src/components/ContactsView';
+import { ContactsView, INITIAL_CONTACTS, Contact, normalizePhoneNumber } from './src/components/ContactsView';
 import {
   CampaignsView,
   Campaign,
+  CampaignStatus,
+  CampaignStats,
+  CampaignStatusBadge,
+  calculateCampaignStats,
+  mapCampaignFromDb,
 } from './src/components/CampaignsView';
 import { ChatbotView } from './src/components/ChatbotView';
 import { TeamView, TeamMember } from './src/components/TeamView';
@@ -81,7 +86,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { key: 'dashboard', label: 'Dashboard' },
-  { key: 'chat', label: 'Percakapan', badge: '1' },
+  { key: 'chat', label: 'Percakapan' },
   { key: 'users', label: 'Kontak' },
   { key: 'campaign', label: 'Kampanye' },
   { key: 'bot', label: 'Chatbot AI' },
@@ -95,24 +100,24 @@ const NAV_ITEMS: NavItem[] = [
 // ==========================================
 interface AppIconProps {
   name:
-    | 'dashboard'
-    | 'chat'
-    | 'users'
-    | 'campaign'
-    | 'bot'
-    | 'team'
-    | 'settings'
-    | 'search'
-    | 'bell'
-    | 'user'
-    | 'chevron-right'
-    | 'plus'
-    | 'check'
-    | 'alert'
-    | 'link'
-    | 'menu'
-    | 'close'
-    | 'log-out';
+  | 'dashboard'
+  | 'chat'
+  | 'users'
+  | 'campaign'
+  | 'bot'
+  | 'team'
+  | 'settings'
+  | 'search'
+  | 'bell'
+  | 'user'
+  | 'chevron-right'
+  | 'plus'
+  | 'check'
+  | 'alert'
+  | 'link'
+  | 'menu'
+  | 'close'
+  | 'log-out';
   size?: number;
   color?: string;
 }
@@ -545,23 +550,31 @@ interface MetricCardProps {
   badgeText: string;
   iconName: AppIconProps['name'];
   isDesktop: boolean;
+  isLoading?: boolean;
+  isError?: boolean;
 }
 
-function MetricCard({ label, value, subtext, badgeText, iconName, isDesktop }: MetricCardProps) {
+function MetricCard({ label, value, subtext, badgeText, iconName, isDesktop, isLoading, isError }: MetricCardProps) {
   return (
-    <View style={[styles.metricCard, { width: isDesktop ? '23.5%' : '48%' }]}>
+    <View style={[styles.metricCard, { width: isDesktop ? '23.5%' : '48%' }, isError && { borderColor: '#FECACA' }]}>
       <View style={styles.metricCardHeader}>
         <Text style={styles.metricLabel}>{label}</Text>
-        <View style={styles.metricIconBox}>
-          <AppIcon name={iconName} size={15} color={COLORS.forestDark} />
+        <View style={[styles.metricIconBox, isError && { backgroundColor: '#FEE2E2' }]}>
+          <AppIcon name={iconName} size={15} color={isError ? '#DC2626' : COLORS.forestDark} />
         </View>
       </View>
-      <Text style={styles.metricValue}>{value}</Text>
-      <View style={styles.metricFooter}>
-        <View style={styles.metricBadge}>
-          <Text style={styles.metricBadgeText}>{badgeText}</Text>
+      {isLoading ? (
+        <View style={{ height: 32, justifyContent: 'center', alignItems: 'flex-start', marginVertical: 4 }}>
+          <ActivityIndicator size="small" color={COLORS.forestDark} />
         </View>
-        <Text style={styles.metricSubtext} numberOfLines={1}>
+      ) : (
+        <Text style={[styles.metricValue, isError && { color: '#B91C1C' }]}>{value}</Text>
+      )}
+      <View style={styles.metricFooter}>
+        <View style={[styles.metricBadge, isError && { backgroundColor: '#FEE2E2' }]}>
+          <Text style={[styles.metricBadgeText, isError && { color: '#B91C1C' }]}>{badgeText}</Text>
+        </View>
+        <Text style={[styles.metricSubtext, isError && { color: '#DC2626' }]} numberOfLines={1}>
           {subtext}
         </Text>
       </View>
@@ -572,12 +585,45 @@ function MetricCard({ label, value, subtext, badgeText, iconName, isDesktop }: M
 // ==========================================
 // TAMPILAN HALAMAN: DASHBOARD
 // ==========================================
+export interface RecentActivityItem {
+  id: string;
+  name: string;
+  phone: string;
+  snippet: string;
+  time: string;
+  status: string;
+}
+
 function DashboardView({
   isDesktop,
   onNavigate,
+  contactsCount = 0,
+  messagesCount = 0,
+  campaignsCount = 0,
+  campaignStats,
+  conversationsCount = 0,
+  isLoading = false,
+  campaigns = [],
+  recentActivities = [],
+  onSelectConversation,
+  isGatewayConnected = false,
+  gatewayPhone,
+  error = null,
 }: {
   isDesktop: boolean;
   onNavigate: (page: NavKey, tab?: SettingsTab) => void;
+  contactsCount?: number;
+  messagesCount?: number;
+  campaignsCount?: number;
+  campaignStats?: CampaignStats;
+  conversationsCount?: number;
+  isLoading?: boolean;
+  campaigns?: Campaign[];
+  recentActivities?: RecentActivityItem[];
+  onSelectConversation?: (id: string) => void;
+  isGatewayConnected?: boolean;
+  gatewayPhone?: string;
+  error?: string | null;
 }) {
   return (
     <View style={styles.pageContainer}>
@@ -595,21 +641,29 @@ function DashboardView({
               </Text>
             </View>
           </View>
-          <View style={styles.statusPillWarning}>
-            <View style={styles.statusDotWarning} />
-            <Text style={styles.statusPillTextWarning}>Belum Terhubung</Text>
-          </View>
+          {isGatewayConnected ? (
+            <View style={[styles.statusPillWarning, { backgroundColor: '#EAF6F0', borderColor: '#C1E6D3' }]}>
+              <View style={[styles.statusDotWarning, { backgroundColor: '#16A36A' }]} />
+              <Text style={[styles.statusPillTextWarning, { color: '#0E7A4E' }]}>Terhubung (Staging)</Text>
+            </View>
+          ) : (
+            <View style={styles.statusPillWarning}>
+              <View style={styles.statusDotWarning} />
+              <Text style={styles.statusPillTextWarning}>Belum Terhubung</Text>
+            </View>
+          )}
         </View>
 
         <Text style={styles.gatewayDescription}>
-          Gateway WhatsApp Business belum ditautkan ke nomor organisasi Anda. Tautkan nomor resmi untuk
-          mengaktifkan kotak masuk percakapan, sinkronisasi kontak real-time, dan pengiriman siaran pesan massal.
+          {isGatewayConnected
+            ? 'Gateway WhatsApp Staging aktif dan terhubung. Pesan pelanggan masuk langsung ke basis data Supabase dan dijawab otomatis oleh Chatbot AI.'
+            : 'Gateway WhatsApp Business belum ditautkan ke nomor organisasi Anda. Tautkan nomor resmi untuk mengaktifkan kotak masuk percakapan, sinkronisasi kontak real-time, dan pengiriman siaran pesan massal.'}
         </Text>
 
         <View style={styles.gatewayMetaStrip}>
           <View style={styles.gatewayMetaItem}>
             <Text style={styles.gatewayMetaLabel}>Nomor Tertaut</Text>
-            <Text style={styles.gatewayMetaVal}>— (Belum Ada)</Text>
+            <Text style={styles.gatewayMetaVal}>{gatewayPhone || '— (Belum Ada)'}</Text>
           </View>
           <View style={styles.gatewayMetaDivider} />
           <View style={styles.gatewayMetaItem}>
@@ -618,8 +672,8 @@ function DashboardView({
           </View>
           <View style={styles.gatewayMetaDivider} />
           <View style={styles.gatewayMetaItem}>
-            <Text style={styles.gatewayMetaLabel}>Webhook Status</Text>
-            <Text style={styles.gatewayMetaVal}>Siaga (0 Event)</Text>
+            <Text style={styles.gatewayMetaLabel}>Pesan Masuk</Text>
+            <Text style={styles.gatewayMetaVal}>{isLoading ? '—' : error ? '— (Error)' : `${messagesCount} Pesan`}</Text>
           </View>
         </View>
 
@@ -629,14 +683,14 @@ function DashboardView({
             activeOpacity={0.8}
             onPress={() => onNavigate('settings', 'gateway')}
           >
-            <Text style={styles.btnPrimaryText}>Tautkan Nomor WhatsApp</Text>
+            <Text style={styles.btnPrimaryText}>{isGatewayConnected ? 'Kelola Gateway' : 'Tautkan Nomor WhatsApp'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={styles.btnSecondary}
             activeOpacity={0.8}
-            onPress={() => onNavigate('settings', 'gateway')}
+            onPress={() => onNavigate('chat')}
           >
-            <Text style={styles.btnSecondaryText}>Pengaturan Webhook</Text>
+            <Text style={styles.btnSecondaryText}>Buka Percakapan</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -647,56 +701,288 @@ function DashboardView({
         <Text style={styles.sectionSubtitleNote}>Periode 30 Hari Terakhir</Text>
       </View>
 
+      {error && (
+        <View style={{
+          backgroundColor: '#FEF2F2',
+          borderColor: '#FECACA',
+          borderWidth: 1,
+          borderRadius: 8,
+          padding: 12,
+          marginBottom: 16,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+        }}>
+          <AppIcon name="alert" size={16} color="#DC2626" />
+          <Text style={{ fontSize: 13, color: '#B91C1C', flex: 1 }}>
+            Kendala sinkronisasi metrik bisnis: {error}
+          </Text>
+        </View>
+      )}
+
       <View style={styles.metricsGrid}>
         <MetricCard
           label="Total Kontak"
-          value="0"
-          subtext="Belum ada data kontak"
-          badgeText="0 baru"
+          value={isLoading ? "—" : error ? "—" : String(contactsCount)}
+          subtext={
+            isLoading
+              ? "Menyinkronkan data kontak..."
+              : error
+                ? "Gagal menyinkronkan data kontak"
+                : contactsCount > 0
+                ? `${contactsCount} kontak terdata`
+                : "Belum ada data kontak"
+          }
+          badgeText={isLoading ? "Memuat..." : error ? "Error" : contactsCount > 0 ? "Tersinkron" : "0 baru"}
           iconName="users"
           isDesktop={isDesktop}
+          isLoading={isLoading}
+          isError={Boolean(error)}
         />
         <MetricCard
           label="Pesan Masuk"
-          value="0"
-          subtext="0 pesan belum dibaca"
-          badgeText="0 baru"
+          value={isLoading ? "—" : error ? "—" : String(messagesCount)}
+          subtext={
+            isLoading
+              ? "Menyinkronkan pesan pelanggan..."
+              : error
+                ? "Gagal menyinkronkan data pesan"
+                : messagesCount > 0
+                ? `${messagesCount} pesan dari pelanggan`
+                : "0 pesan dari pelanggan"
+          }
+          badgeText={isLoading ? "Memuat..." : error ? "Error" : messagesCount > 0 ? "Pelanggan" : "0 baru"}
           iconName="chat"
           isDesktop={isDesktop}
+          isLoading={isLoading}
+          isError={Boolean(error)}
         />
         <MetricCard
           label="Kampanye Aktif"
-          value="0"
-          subtext="0 antrean siaran"
-          badgeText="Non-aktif"
+          value={isLoading ? "—" : error ? "—" : String(campaignStats ? campaignStats.active : campaignsCount)}
+          subtext={
+            isLoading
+              ? "Menyinkronkan status kampanye..."
+              : error
+                ? "Gagal menyinkronkan status kampanye"
+                : campaignStats && campaignStats.total > 0
+                ? campaignStats.running > 0 && campaignStats.scheduled > 0
+                  ? `${campaignStats.running} berjalan, ${campaignStats.scheduled} terjadwal (total ${campaignStats.total} siaran)`
+                  : campaignStats.running > 0
+                    ? `${campaignStats.running} siaran berjalan (total ${campaignStats.total} siaran)`
+                    : campaignStats.scheduled > 0
+                      ? `${campaignStats.scheduled} siaran terjadwal (total ${campaignStats.total} siaran)`
+                      : `0 siaran aktif (${campaignStats.draft} draf, ${campaignStats.completed} selesai)`
+                : campaignsCount > 0
+                  ? `${campaignsCount} siaran aktif`
+                  : "Belum ada kampanye siaran dibuat"
+          }
+          badgeText={
+            isLoading
+              ? "Memuat..."
+              : error
+                ? "Error"
+                : campaignStats && campaignStats.running > 0
+                ? "Berjalan"
+                : campaignStats && campaignStats.scheduled > 0
+                  ? "Terjadwal"
+                  : campaignStats && campaignStats.total > 0
+                    ? `${campaignStats.total} Total`
+                    : "0 baru"
+          }
           iconName="campaign"
           isDesktop={isDesktop}
+          isLoading={isLoading}
+          isError={Boolean(error)}
         />
         <MetricCard
-          label="Percakapan AI"
-          value="0"
-          subtext="Asisten siap diaktifkan"
-          badgeText="Standby"
+          label="Percakapan Terbuka"
+          value={isLoading ? "—" : error ? "—" : String(conversationsCount)}
+          subtext={
+            isLoading
+              ? "Menyinkronkan status percakapan..."
+              : error
+                ? "Gagal menyinkronkan status percakapan"
+                : conversationsCount > 0
+                ? `${conversationsCount} percakapan terbuka`
+                : "Semua percakapan selesai"
+          }
+          badgeText={isLoading ? "Memuat..." : error ? "Error" : conversationsCount > 0 ? "Terbuka" : "Standby"}
           iconName="bot"
           isDesktop={isDesktop}
+          isLoading={isLoading}
+          isError={Boolean(error)}
         />
+      </View>
+
+      {/* Ringkasan Kampanye Eksekutif */}
+      <View style={styles.panelCard}>
+        <View style={styles.panelCardHeader}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={styles.campaignHeaderIcon}>
+              <AppIcon name="campaign" size={16} color={COLORS.forestDark} />
+            </View>
+            <View>
+              <Text style={styles.panelCardTitle}>Ringkasan Kampanye Eksekutif</Text>
+              <Text style={styles.panelCardSubtitle}>
+                Status Siaran WhatsApp Massal & Kampanye Terjadwal
+              </Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.btnSecondary}
+            activeOpacity={0.8}
+            onPress={() => onNavigate('campaign')}
+          >
+            <Text style={styles.btnSecondaryText}>Buka Manajemen Kampanye →</Text>
+          </TouchableOpacity>
+        </View>
+
+        {isLoading ? (
+          <View style={{ padding: 24, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <ActivityIndicator size="small" color={COLORS.forestDark} />
+            <Text style={{ fontSize: 13, color: COLORS.textSecondary }}>
+              Menyinkronkan data kampanye organisasi...
+            </Text>
+          </View>
+        ) : error ? (
+          <View style={styles.campaignErrorCard}>
+            <AppIcon name="alert" size={18} color="#B91C1C" />
+            <Text style={{ fontSize: 13, color: '#B91C1C', flex: 1 }}>
+              Gagal memuat status kampanye: {error}
+            </Text>
+          </View>
+        ) : campaigns.length === 0 ? (
+          <EmptyState
+            iconName="campaign"
+            title="Belum Ada Kampanye Siaran"
+            description="Organisasi Anda belum membuat kampanye siaran pesan. Buat kampanye pertama untuk menjangkau kontak pelanggan dengan pesan terjadwal atau promosi instan."
+            primaryActionLabel="+ Buat Kampanye Pertama"
+            onPrimaryAction={() => onNavigate('campaign')}
+          />
+        ) : (
+          <View style={{ gap: 14 }}>
+            {/* KPI Strip */}
+            <View style={styles.campaignKpiStrip}>
+              <View style={styles.campaignKpiItem}>
+                <Text style={styles.campaignKpiLabel}>Total Kampanye</Text>
+                <Text style={styles.campaignKpiVal}>{campaignStats?.total ?? campaigns.length}</Text>
+              </View>
+              <View style={styles.campaignKpiDivider} />
+              <View style={styles.campaignKpiItem}>
+                <Text style={styles.campaignKpiLabel}>Siaran Terjadwal</Text>
+                <Text style={[styles.campaignKpiVal, { color: '#1D4ED8' }]}>{campaignStats?.scheduled ?? 0}</Text>
+              </View>
+              <View style={styles.campaignKpiDivider} />
+              <View style={styles.campaignKpiItem}>
+                <Text style={styles.campaignKpiLabel}>Sedang Berjalan</Text>
+                <Text style={[styles.campaignKpiVal, { color: '#B45309' }]}>{campaignStats?.running ?? 0}</Text>
+              </View>
+              <View style={styles.campaignKpiDivider} />
+              <View style={styles.campaignKpiItem}>
+                <Text style={styles.campaignKpiLabel}>Selesai Dikirim</Text>
+                <Text style={[styles.campaignKpiVal, { color: '#047857' }]}>{campaignStats?.completed ?? 0}</Text>
+              </View>
+              <View style={styles.campaignKpiDivider} />
+              <View style={styles.campaignKpiItem}>
+                <Text style={styles.campaignKpiLabel}>Draf Disimpan</Text>
+                <Text style={[styles.campaignKpiVal, { color: '#64748B' }]}>{campaignStats?.draft ?? 0}</Text>
+              </View>
+            </View>
+
+            {/* List 4 Kampanye Terbaru */}
+            <View style={{ gap: 8 }}>
+              {campaigns.slice(0, 4).map((cmp) => (
+                <TouchableOpacity
+                  key={cmp.id}
+                  style={styles.recentCampaignRow}
+                  activeOpacity={0.7}
+                  onPress={() => onNavigate('campaign')}
+                >
+                  <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <Text style={styles.recentCampaignName} numberOfLines={1}>{cmp.name}</Text>
+                      <CampaignStatusBadge status={cmp.status} />
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <Text style={styles.recentCampaignMeta}>
+                        Penerima: {cmp.totalRecipients || 0} kontak
+                        {cmp.targetSegment && cmp.targetSegment !== 'all' ? ` (${cmp.targetSegment})` : ''}
+                      </Text>
+                      <Text style={styles.recentCampaignDot}>•</Text>
+                      <Text style={styles.recentCampaignMeta}>
+                        {cmp.scheduledAt ? `Jadwal: ${cmp.scheduledAt}` : cmp.createdAt ? `Dibuat: ${cmp.createdAt}` : 'Baru'}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={styles.recentCampaignAction}>
+                    <Text style={styles.recentCampaignActionText}>Lihat →</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Kolom 2 Bagian: Aktivitas Terbaru & Checklist Integrasi */}
       <View style={[styles.dualColumnGrid, !isDesktop && styles.columnStacked]}>
-        {/* Kolom Kiri: Log Aktivitas Terbaru (Empty State Profesional) */}
+        {/* Kolom Kiri: Log Aktivitas Terbaru */}
         <View style={[styles.panelCard, { flex: isDesktop ? 1.4 : 1 }]}>
           <View style={styles.panelCardHeader}>
             <Text style={styles.panelCardTitle}>Log Aktivitas Terbaru</Text>
             <Text style={styles.panelCardBadge}>Real-time Event</Text>
           </View>
-          <EmptyState
-            iconName="chat"
-            title="Belum Ada Aktivitas Percakapan"
-            description="Seluruh log interaksi pelanggan, respon bot AI, dan broadcast pesan siaran akan tercatat otomatis di sini setelah gateway terhubung."
-            primaryActionLabel="Buka Pusat Percakapan"
-            onPrimaryAction={() => onNavigate('chat')}
-          />
+          {recentActivities.length === 0 ? (
+            <EmptyState
+              iconName="chat"
+              title="Belum Ada Aktivitas Percakapan"
+              description="Seluruh log interaksi pelanggan, respon bot AI, dan broadcast pesan siaran akan tercatat otomatis di sini setelah gateway terhubung."
+              primaryActionLabel="Buka Pusat Percakapan"
+              onPrimaryAction={() => onNavigate('chat')}
+            />
+          ) : (
+            <View style={{ gap: 8, paddingVertical: 4 }}>
+              {recentActivities.map((act) => (
+                <TouchableOpacity
+                  key={act.id}
+                  style={styles.recentActivityItem}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    if (onSelectConversation) {
+                      onSelectConversation(act.id);
+                    }
+                    onNavigate('chat');
+                  }}
+                >
+                  <View style={styles.recentActivityAvatar}>
+                    <Text style={styles.recentActivityAvatarText}>
+                      {(act.name || 'WB').slice(0, 2).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text style={styles.recentActivityName} numberOfLines={1}>{act.name}</Text>
+                      <Text style={styles.recentActivityTime}>{act.time}</Text>
+                    </View>
+                    <Text style={styles.recentActivitySnippet} numberOfLines={1}>{act.snippet}</Text>
+                  </View>
+                  <View style={styles.recentActivityStatus}>
+                    <Text style={styles.recentActivityStatusText}>
+                      {act.status === 'open' ? 'CS' : act.status === 'resolved' ? 'Selesai' : 'AI'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={styles.btnViewAllActivities}
+                activeOpacity={0.7}
+                onPress={() => onNavigate('chat')}
+              >
+                <Text style={styles.btnViewAllActivitiesText}>Lihat Semua di Pusat Percakapan →</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* Kolom Kanan: Checklist Kesiapan Workspace */}
@@ -798,6 +1084,7 @@ export default function App() {
   // Supabase Auth & Organization State
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
+  const [currentUserRole, setCurrentUserRole] = useState<'owner' | 'admin' | 'member' | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isOrgLoading, setIsOrgLoading] = useState(false);
   const [hasOrganization, setHasOrganization] = useState<boolean | null>(null);
@@ -815,6 +1102,25 @@ export default function App() {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [orgProfile, setOrgProfile] = useState<OrgProfile>(DEFAULT_ORG_PROFILE);
+  const [dashboardMetrics, setDashboardMetrics] = useState({
+    contactsCount: 0,
+    messagesCount: 0,
+    campaignsCount: 0,
+    conversationsCount: 0,
+    campaignStats: {
+      total: 0,
+      active: 0,
+      running: 0,
+      scheduled: 0,
+      draft: 0,
+      completed: 0,
+      cancelled: 0,
+    } as CampaignStats,
+    isLoading: true,
+    isLoaded: false,
+    error: null as string | null,
+    recentActivities: [] as RecentActivityItem[],
+  });
 
   // Ref untuk mendeteksi pergantian user ID antar sesi
   const previousUserIdRef = useRef<string | null>(null);
@@ -823,15 +1129,299 @@ export default function App() {
   const resetWorkspaceState = useCallback(() => {
     setHasOrganization(null);
     setCurrentOrg(null);
+    setCurrentUserRole(null);
     setContacts([]);
     setConversations([]);
     setSelectedConversationId(null);
     setTeamMembers([]);
     setCampaigns([]);
     setOrgProfile(DEFAULT_ORG_PROFILE);
+    setDashboardMetrics({
+      contactsCount: 0,
+      messagesCount: 0,
+      campaignsCount: 0,
+      conversationsCount: 0,
+      campaignStats: {
+        total: 0,
+        active: 0,
+        running: 0,
+        scheduled: 0,
+        draft: 0,
+        completed: 0,
+        cancelled: 0,
+      },
+      isLoading: false,
+      isLoaded: false,
+      error: null,
+      recentActivities: [],
+    });
     setActiveNav('dashboard');
     setGlobalSearch('');
   }, []);
+
+  // Fetch metrik bisnis dashboard secara nyata dari Supabase
+  const fetchDashboardMetrics = useCallback(async (orgId?: string) => {
+    const targetOrgId = orgId || currentOrg?.id;
+    if (!targetOrgId) {
+      setDashboardMetrics((prev) => ({
+        ...prev,
+        isLoading: false,
+        isLoaded: true,
+      }));
+      return;
+    }
+
+    try {
+      // 1. Total Kontak (Tersimpan di tabel contacts pada organisasi aktif)
+      const { count: contactsCount, error: contactsErr } = await supabase
+        .from('contacts')
+        .select('*', { count: 'exact', head: true })
+        .eq('organization_id', targetOrgId);
+
+      if (contactsErr) throw contactsErr;
+
+      // 2. Pesan Masuk (HANYA pesan masuk dari pelanggan / inbound: sender_type = 'customer')
+      const { count: messagesCount, error: messagesErr } = await supabase
+        .from('messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('organization_id', targetOrgId)
+        .eq('sender_type', 'customer');
+
+      if (messagesErr) throw messagesErr;
+
+      // 3. Kampanye: muat seluruh data kampanye organisasi untuk Dashboard & Modul Kampanye
+      const { data: campaignRows, error: campaignsErr } = await supabase
+        .from('campaigns')
+        .select('id, organization_id, name, message_body, status, scheduled_at, sent_at, created_at, updated_at, sender_phone, total_recipients, sent_count, failed_count, skipped_count, target_segment')
+        .eq('organization_id', targetOrgId)
+        .order('created_at', { ascending: false });
+
+      if (campaignsErr) throw campaignsErr;
+
+      let fetchedCampaigns: Campaign[] = [];
+      if (campaignRows) {
+        fetchedCampaigns = campaignRows.map(mapCampaignFromDb);
+        setCampaigns(fetchedCampaigns);
+      }
+
+      const campaignStats = calculateCampaignStats(fetchedCampaigns, targetOrgId);
+
+      // 4. Percakapan Terbuka (HANYA percakapan dengan status aktif/terbuka: status = 'open')
+      const { count: openConversationsCount, error: convErr } = await supabase
+        .from('conversations')
+        .select('*', { count: 'exact', head: true })
+        .eq('organization_id', targetOrgId)
+        .eq('status', 'open');
+
+      if (convErr) throw convErr;
+
+      // 5. Aktivitas Terbaru (4 percakapan terakhir untuk log ringkas di dashboard)
+      const { data: convData, error: recentErr } = await supabase
+        .from('conversations')
+        .select(`
+          id,
+          status,
+          last_message_at,
+          contacts ( name, phone )
+        `)
+        .eq('organization_id', targetOrgId)
+        .order('last_message_at', { ascending: false })
+        .limit(4);
+
+      if (recentErr) throw recentErr;
+
+      let activities: RecentActivityItem[] = [];
+      if (convData && convData.length > 0) {
+        const convIds = convData.map((c) => c.id);
+        const { data: recentMsgs } = await supabase
+          .from('messages')
+          .select('conversation_id, body, created_at')
+          .in('conversation_id', convIds)
+          .eq('organization_id', targetOrgId)
+          .order('created_at', { ascending: false });
+
+        const latestMsgMap: Record<string, { body: string; created_at: string }> = {};
+        if (recentMsgs) {
+          for (const m of recentMsgs) {
+            if (!latestMsgMap[m.conversation_id]) {
+              latestMsgMap[m.conversation_id] = { body: m.body, created_at: m.created_at };
+            }
+          }
+        }
+
+        activities = convData.map((row) => {
+          const contactObj = Array.isArray(row.contacts) ? row.contacts[0] : row.contacts;
+          const name = contactObj?.name || 'Kontak Tanpa Nama';
+          const phone = contactObj?.phone || '-';
+          const latestMsg = latestMsgMap[row.id];
+          const time = latestMsg?.created_at
+            ? new Date(latestMsg.created_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+            : row.last_message_at
+              ? new Date(row.last_message_at).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })
+              : '';
+
+          return {
+            id: row.id,
+            name,
+            phone,
+            snippet: latestMsg?.body || 'Belum ada pesan',
+            time,
+            status: row.status || 'open',
+          };
+        });
+      }
+
+      setDashboardMetrics({
+        contactsCount: contactsCount || 0,
+        messagesCount: messagesCount || 0,
+        campaignsCount: campaignStats.active,
+        campaignStats,
+        conversationsCount: openConversationsCount || 0,
+        recentActivities: activities,
+        isLoading: false,
+        isLoaded: true,
+        error: null,
+      });
+    } catch (e: any) {
+      console.error('Error fetching dashboard metrics:', e);
+      setDashboardMetrics((prev) => ({
+        ...prev,
+        isLoading: false,
+        error: e?.message || 'Gagal memuat metrik',
+      }));
+    }
+  }, [currentOrg?.id]);
+
+  // Sinkronisasi metrik dashboard: Polling berkala + Supabase Realtime seketika
+  useEffect(() => {
+    if (!currentOrg?.id) return;
+    fetchDashboardMetrics(currentOrg.id);
+
+    // Supabase Realtime Channel untuk sinkronisasi metrik seketika (messages, conversations, contacts)
+    const channel = supabase
+      .channel(`realtime_dashboard_metrics_${currentOrg.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'messages',
+          filter: `organization_id=eq.${currentOrg.id}`,
+        },
+        () => {
+          fetchDashboardMetrics(currentOrg.id);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'conversations',
+          filter: `organization_id=eq.${currentOrg.id}`,
+        },
+        () => {
+          fetchDashboardMetrics(currentOrg.id);
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'contacts',
+          filter: `organization_id=eq.${currentOrg.id}`,
+        },
+        () => {
+          fetchDashboardMetrics(currentOrg.id);
+        }
+      )
+      .subscribe();
+
+    const interval = setInterval(() => {
+      fetchDashboardMetrics(currentOrg.id);
+    }, 5000);
+
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
+  }, [currentOrg?.id, fetchDashboardMetrics]);
+
+  // Handler sinkronisasi instan saat percakapan dihapus di modul Percakapan
+  const handleConversationDeleted = useCallback(
+    (deletedConv: Conversation) => {
+      // 1. Optimistic update jika messages tersimpan di in-memory state percakapan
+      const customerMsgsCount = deletedConv.messages
+        ? deletedConv.messages.filter((m) => m.sender === 'customer').length
+        : 0;
+
+      if (customerMsgsCount > 0) {
+        setDashboardMetrics((prev) => ({
+          ...prev,
+          messagesCount: Math.max(0, prev.messagesCount - customerMsgsCount),
+        }));
+      }
+
+      // 2. Refresh metrik secara instan dari database untuk memastikan akurasi data kanonikal
+      if (currentOrg?.id) {
+        fetchDashboardMetrics(currentOrg.id);
+      }
+    },
+    [currentOrg?.id, fetchDashboardMetrics]
+  );
+
+  // Handler sinkronisasi instan saat status percakapan atau pesan diperbarui
+  const handleConversationUpdated = useCallback(() => {
+    if (currentOrg?.id) {
+      fetchDashboardMetrics(currentOrg.id);
+    }
+  }, [currentOrg?.id, fetchDashboardMetrics]);
+
+  // Metrik Reaktif: Menggabungkan state in-memory yang aktif dengan persistensi Supabase
+  const effectiveContactsCount = useMemo(() => {
+    if (contacts.length > 0) {
+      const relevant = currentOrg?.id ? contacts.filter((c) => !c.isDemo) : contacts;
+      const uniquePhones = new Set(relevant.map((c) => normalizePhoneNumber(c.phone)));
+      return uniquePhones.size;
+    }
+    return dashboardMetrics.contactsCount;
+  }, [contacts, currentOrg?.id, dashboardMetrics.contactsCount]);
+
+  const effectiveConversationsCount = useMemo(() => {
+    if (conversations.length > 0) {
+      const relevant = currentOrg?.id ? conversations.filter((c) => !c.isDemo) : conversations;
+      return relevant.filter((c) => c.status === 'open').length;
+    }
+    return dashboardMetrics.conversationsCount;
+  }, [conversations, currentOrg?.id, dashboardMetrics.conversationsCount]);
+
+  const effectiveCampaignStats = useMemo(() => {
+    if (campaigns.length > 0) {
+      return calculateCampaignStats(campaigns, currentOrg?.id);
+    }
+    return dashboardMetrics.campaignStats;
+  }, [campaigns, currentOrg?.id, dashboardMetrics.campaignStats]);
+
+  const effectiveCampaignsCount = effectiveCampaignStats.active;
+
+  // Filter kampanye aman untuk Dashboard Eksekutif (isolasi tenant & pemisahan data demo)
+  const dashboardCampaigns = useMemo(() => {
+    if (currentOrg?.id) {
+      return campaigns.filter((c) => !c.isDemo && (!c.organizationId || c.organizationId === currentOrg.id));
+    }
+    return campaigns;
+  }, [campaigns, currentOrg?.id]);
+
+  const effectiveMessagesCount = useMemo(() => {
+    if (!currentOrg?.id) {
+      return conversations.reduce(
+        (sum, c) => sum + (c.messages ? c.messages.filter((m) => m.sender === 'customer').length : 0),
+        0
+      );
+    }
+    return dashboardMetrics.messagesCount;
+  }, [conversations, currentOrg?.id, dashboardMetrics.messagesCount]);
 
   // Pengecekan organisasi pengguna di Supabase
   const checkUserOrganization = async (userId: string) => {
@@ -840,15 +1430,18 @@ export default function App() {
       // 1. Periksa relasi keanggotaan pengguna di organization_members
       const { data: memberData, error: memberError } = await supabase
         .from('organization_members')
-        .select('organization_id')
+        .select('organization_id, role')
         .eq('user_id', userId);
 
       if (memberError) {
         console.error('Error fetching org membership:', memberError.message);
         setHasOrganization(false);
         setCurrentOrg(null);
+        setCurrentUserRole(null);
       } else if (memberData && memberData.length > 0) {
         const orgId = memberData[0].organization_id;
+        const role = (memberData[0].role as 'owner' | 'admin' | 'member') || 'member';
+        setCurrentUserRole(role);
         // Ambil data organisasi dari tabel organizations
         const { data: orgData, error: orgError } = await supabase
           .from('organizations')
@@ -1057,6 +1650,17 @@ export default function App() {
       .join('')
       .toUpperCase() || 'WB';
 
+  const dynamicNavItems = NAV_ITEMS.map((item) => {
+    if (item.key === 'chat') {
+      const activeCount = effectiveConversationsCount;
+      return {
+        ...item,
+        badge: activeCount > 0 ? String(activeCount) : undefined,
+      };
+    }
+    return item;
+  });
+
   return (
     <SafeAreaView style={styles.appRoot}>
       <StatusBar style="light" />
@@ -1080,6 +1684,27 @@ export default function App() {
                     </View>
                   </View>
                   <Text style={styles.brandWorkspace}>{currentOrg?.name || 'Workspace WABiz'}</Text>
+                  {currentUserRole && (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                      <View
+                        style={{
+                          backgroundColor:
+                            currentUserRole === 'owner'
+                              ? '#1e3a8a'
+                              : currentUserRole === 'admin'
+                                ? '#065f46'
+                                : '#374151',
+                          paddingHorizontal: 6,
+                          paddingVertical: 1,
+                          borderRadius: 4,
+                        }}
+                      >
+                        <Text style={{ color: '#e5e7eb', fontSize: 9, fontWeight: '700', textTransform: 'uppercase' }}>
+                          {currentUserRole === 'member' ? 'PETUGAS CS' : currentUserRole}
+                        </Text>
+                      </View>
+                    </View>
+                  )}
                 </View>
               </View>
             </View>
@@ -1087,7 +1712,7 @@ export default function App() {
             {/* Menu Navigasi Utama */}
             <View style={styles.sidebarNavList}>
               <Text style={styles.sidebarSectionHeading}>MENU UTAMA</Text>
-              {NAV_ITEMS.map((item) => {
+              {dynamicNavItems.map((item) => {
                 const isActive = activeNav === item.key;
                 return (
                   <TouchableOpacity
@@ -1238,6 +1863,8 @@ export default function App() {
                 setSelectedId={setSelectedConversationId}
                 isDesktop={isDesktop}
                 onNavigate={handleNavSelect}
+                onConversationDeleted={handleConversationDeleted}
+                onConversationUpdated={handleConversationUpdated}
               />
             </View>
           ) : (
@@ -1249,8 +1876,44 @@ export default function App() {
               ]}
               showsVerticalScrollIndicator={false}
             >
+              {currentUserRole === 'member' && (activeNav === 'team' || activeNav === 'settings') && (
+                <View
+                  style={{
+                    backgroundColor: '#1e293b',
+                    borderColor: '#334155',
+                    borderWidth: 1,
+                    borderRadius: 8,
+                    padding: 12,
+                    marginBottom: 16,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                  }}
+                >
+                  <AppIcon name="alert" size={18} color="#f59e0b" />
+                  <Text style={{ color: '#cbd5e1', fontSize: 13, flex: 1, lineHeight: 18 }}>
+                    <Text style={{ fontWeight: '700', color: '#f59e0b' }}>Mode Petugas CS (Read Only): </Text>
+                    Pengubahan profil organisasi dan anggota tim dibatasi untuk peran Admin atau Owner sesuai kebijakan keamanan server.
+                  </Text>
+                </View>
+              )}
               {activeNav === 'dashboard' && (
-                <DashboardView isDesktop={isDesktop} onNavigate={handleNavSelect} />
+                <DashboardView
+                  isDesktop={isDesktop}
+                  onNavigate={handleNavSelect}
+                  contactsCount={effectiveContactsCount}
+                  messagesCount={effectiveMessagesCount}
+                  campaignsCount={effectiveCampaignsCount}
+                  campaignStats={effectiveCampaignStats}
+                  campaigns={dashboardCampaigns}
+                  conversationsCount={effectiveConversationsCount}
+                  isLoading={dashboardMetrics.isLoading && !dashboardMetrics.isLoaded}
+                  error={dashboardMetrics.error}
+                  recentActivities={dashboardMetrics.recentActivities}
+                  onSelectConversation={(id) => setSelectedConversationId(id)}
+                  isGatewayConnected={orgProfile.isGatewayConnected}
+                  gatewayPhone={orgProfile.escalationPhone}
+                />
               )}
               {activeNav === 'users' && (
                 <ContactsView
@@ -1270,6 +1933,11 @@ export default function App() {
                   contacts={contacts}
                   isDesktop={isDesktop}
                   onNavigate={handleNavSelect}
+                  onCampaignUpdated={() => {
+                    if (currentOrg?.id) {
+                      fetchDashboardMetrics(currentOrg.id);
+                    }
+                  }}
                 />
               )}
               {activeNav === 'bot' && (
@@ -1309,7 +1977,7 @@ export default function App() {
           {/* NAVIGASI BAWAH UNTUK PERANGKAT MOBILE */}
           {!isDesktop && (
             <View style={styles.mobileBottomNav}>
-              {NAV_ITEMS.slice(0, 4).map((item) => {
+              {dynamicNavItems.slice(0, 4).map((item) => {
                 const isActive = activeNav === item.key;
                 return (
                   <TouchableOpacity
@@ -1347,7 +2015,7 @@ export default function App() {
                   style={[
                     styles.mobileNavIconBox,
                     (activeNav === 'bot' || activeNav === 'team' || activeNav === 'settings') &&
-                      styles.mobileNavIconBoxActive,
+                    styles.mobileNavIconBoxActive,
                   ]}
                 >
                   <AppIcon
@@ -1364,7 +2032,7 @@ export default function App() {
                   style={[
                     styles.mobileBottomNavLabel,
                     (activeNav === 'bot' || activeNav === 'team' || activeNav === 'settings') &&
-                      styles.mobileBottomNavLabelActive,
+                    styles.mobileBottomNavLabelActive,
                   ]}
                 >
                   Lainnya
@@ -1409,7 +2077,7 @@ export default function App() {
             {/* List Navigasi Drawer */}
             <ScrollView style={styles.mobileDrawerNavList}>
               <Text style={styles.sidebarSectionHeading}>NAVIGASI WORKSPACE</Text>
-              {NAV_ITEMS.map((item) => {
+              {dynamicNavItems.map((item) => {
                 const isActive = activeNav === item.key;
                 return (
                   <TouchableOpacity
@@ -2317,6 +2985,97 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.textDark,
   },
+  campaignHeaderIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 6,
+    backgroundColor: '#EAF6F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  panelCardSubtitle: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  campaignErrorCard: {
+    padding: 14,
+    backgroundColor: '#FEF2F2',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  campaignKpiStrip: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.surfaceMuted,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  campaignKpiItem: {
+    flex: 1,
+    minWidth: 90,
+    alignItems: 'center',
+  },
+  campaignKpiDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: COLORS.border,
+  },
+  campaignKpiLabel: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+    fontWeight: '500',
+    marginBottom: 2,
+  },
+  campaignKpiVal: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: COLORS.textDark,
+  },
+  recentCampaignRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.surface,
+    gap: 10,
+  },
+  recentCampaignName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: COLORS.textDark,
+  },
+  recentCampaignMeta: {
+    fontSize: 11,
+    color: COLORS.textSecondary,
+  },
+  recentCampaignDot: {
+    fontSize: 11,
+    color: COLORS.borderStrong,
+  },
+  recentCampaignAction: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    backgroundColor: COLORS.surfaceMuted,
+  },
+  recentCampaignActionText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.forestDark,
+  },
   botConfigCard: {
     backgroundColor: COLORS.surface,
     borderRadius: 10,
@@ -2532,5 +3291,65 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: 12,
     paddingTop: 16,
+  },
+  // ----------------------------------------
+  // LOG AKTIVITAS TERBARU DASHBOARD
+  // ----------------------------------------
+  recentActivityItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 10,
+    backgroundColor: '#FAFCFB',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E4EAE6',
+    gap: 10,
+  },
+  recentActivityAvatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recentActivityAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  recentActivityName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#17231F',
+  },
+  recentActivityTime: {
+    fontSize: 10,
+    color: '#718078',
+  },
+  recentActivitySnippet: {
+    fontSize: 12,
+    color: '#718078',
+    marginTop: 2,
+  },
+  recentActivityStatus: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    backgroundColor: '#EAF6F0',
+  },
+  recentActivityStatusText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#16A36A',
+  },
+  btnViewAllActivities: {
+    paddingVertical: 8,
+    alignItems: 'center',
+  },
+  btnViewAllActivitiesText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#16A36A',
   },
 });
