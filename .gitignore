@@ -54,3 +54,8 @@ server/sessions/
 server/auth_info/
 server/dist/
 
+
+# Playwright test artifacts
+test-results/
+playwright-report/
+playwright/.cache/
