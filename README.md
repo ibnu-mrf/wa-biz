@@ -579,3 +579,128 @@ Proyek ini menerapkan React Native, Expo, dan TypeScript untuk pengembangan apli
 Melalui analisis kebutuhan, perancangan UML, dokumentasi arsitektur, implementasi, dan pengujian fungsional, WABiz dikembangkan sebagai penerapan konsep Analisis & Pengujian Sistem.
 
 Dokumentasi ini membedakan rancangan, implementasi, dan hasil pengujian agar status sistem dapat dievaluasi secara objektif pada saat demonstrasi UTS.
+
+
+
+## Playwright Automation Testing – Initial Implementation
+
+### 1. Overview
+
+Pada tahap ini, WABiz mulai menerapkan **Playwright** sebagai framework untuk melakukan Browser Automation Testing dan End-to-End (E2E) Testing pada aplikasi berbasis Expo Web.
+
+Implementasi awal difokuskan pada modul autentikasi pengguna, yaitu proses masuk (login), validasi formulir, penanganan kegagalan login, dan navigasi antara halaman login dan registrasi.
+
+Pengujian ditulis menggunakan pendekatan **Behavior-Driven Development (BDD)** dengan pola Given–When–Then agar setiap skenario dapat menggambarkan perilaku aplikasi dari sudut pandang pengguna.
+
+### 2. Tools and Technologies
+
+Teknologi yang digunakan dalam implementasi awal:
+
+- **Playwright Test** – menjalankan pengujian otomatis pada browser.
+- **Chromium** – browser yang digunakan untuk menjalankan skenario pengujian.
+- **Expo Web** – menjalankan aplikasi WABiz sebagai target pengujian.
+- **TypeScript** – bahasa pemrograman untuk konfigurasi dan test script.
+- **Supabase Auth API Mock** – simulasi respons autentikasi untuk menguji kondisi login gagal tanpa bergantung pada kredensial akun sungguhan.
+
+### 3. Installation and Configuration
+
+Playwright ditambahkan sebagai development dependency pada proyek WABiz:
+
+```bash
+npm install -D @playwright/test
+```
+
+File konfigurasi dibuat dengan nama `playwright.config.ts`.
+
+Konfigurasi awal mencakup:
+
+- Direktori pengujian: `./tests`
+- Browser: Chromium
+- Base URL: `http://localhost:8081`
+- Web server: Expo Web
+- Screenshot otomatis ketika pengujian gagal.
+- Trace pada pengujian ulang ketika terjadi kegagalan.
+
+Script pengujian juga ditambahkan ke `package.json`:
+
+```json
+"test:e2e": "playwright test"
+```
+
+### 4. Test Scenario Implementation
+
+File pengujian pertama dibuat pada:
+
+`tests/auth.spec.ts`
+
+Skenario pengujian awal berfokus pada fitur autentikasi WABiz:
+
+| No. | Test Scenario | Expected Result |
+|---|---|---|
+| 1 | Halaman autentikasi berhasil dimuat | Elemen utama halaman login ditampilkan |
+| 2 | Login dengan email kosong | Sistem menampilkan validasi email wajib diisi |
+| 3 | Login dengan format email tidak valid | Sistem menampilkan pesan format email tidak valid |
+| 4 | Login tanpa kata sandi | Sistem menampilkan validasi kata sandi wajib diisi |
+| 5 | Kata sandi kurang dari 6 karakter | Sistem menampilkan validasi minimal 6 karakter |
+| 6 | Login menggunakan kredensial salah | Sistem menampilkan pesan kegagalan autentikasi |
+| 7 | Navigasi tab Masuk dan Daftar Baru | Formulir berubah sesuai tab yang dipilih |
+
+Setiap skenario disusun menggunakan tahapan:
+
+- **Given:** kondisi awal sebelum tindakan pengguna dilakukan.
+- **When:** tindakan yang dilakukan pengguna.
+- **Then:** hasil yang diharapkan dari sistem.
+
+### 5. Running the First Playwright Test
+
+Setelah konfigurasi dan test script selesai dibuat, pengujian pertama dijalankan melalui terminal pada direktori utama proyek WABiz.
+
+Perintah yang digunakan pada Windows PowerShell:
+
+```powershell
+npm.cmd run test:e2e
+```
+
+Playwright kemudian menjalankan aplikasi Expo Web pada port 8081 dan membuka browser Chromium untuk mengeksekusi seluruh skenario yang telah dibuat.
+
+### 6. Initial Test Result
+
+Hasil pengujian awal:
+
+| Test Result | Total |
+|---|---:|
+| Passed | 7 |
+| Failed | 0 |
+| Total Tests | 7 |
+
+<details>
+<summary>Initial test execution</summary>
+
+**Status:** All 7 tests passed.
+
+Pengujian awal berhasil dijalankan tanpa kegagalan. Hasil ini menunjukkan bahwa konfigurasi dasar Playwright, proses menjalankan aplikasi WABiz melalui Expo Web, dan skenario pengujian autentikasi awal dapat berjalan sesuai harapan.
+
+</details>
+
+### 7. Implementation Summary
+
+Implementasi awal ini menghasilkan beberapa komponen penting:
+
+1. Playwright berhasil ditambahkan ke proyek WABiz.
+2. Konfigurasi browser automation dibuat melalui `playwright.config.ts`.
+3. Perintah `test:e2e` ditambahkan agar pengujian dapat dijalankan dengan mudah.
+4. Tujuh skenario pengujian autentikasi berhasil dibuat menggunakan pola Given–When–Then.
+5. Pengujian awal berhasil dijalankan dengan hasil 7 passed dan 0 failed.
+
+Pengujian ini merupakan tahap awal automation testing pada WABiz. Pengujian difokuskan pada aplikasi Expo Web di browser Chromium dan belum mencakup seluruh integrasi dengan layanan eksternal secara langsung.
+
+### 8. GitHub Commit
+
+Implementasi awal Playwright telah disimpan dalam commit berikut:
+
+**Commit:** `dea1497`
+
+**Message:** `test: add Playwright BDD authentication tests`
+
+**Commit Link:** https://github.com/ibnu-mrf/wa-biz/commit/dea1497
+
