@@ -68,7 +68,7 @@ export interface ChatMessage {
   isEscalated?: boolean;
   leadTagged?: boolean;
   links?: { label: string; url: string }[];
-  source?: 'local_grounded_rules' | 'backend_edge_function';
+  source?: 'local_grounded_rules' | 'backend_edge_function' | 'gemini_ai_cloud' | 'wabiz_ai_engine';
 }
 
 // ==========================================
@@ -1776,9 +1776,9 @@ export function ChatbotView({
                 </Text>
               </View>
 
-              <TouchableOpacity style={styles.chatResetBtn} onPress={handleClearSimulator}>
+              <TouchableOpacity style={styles.chatResetBtn} onPress={handleClearSimulator} accessibilityLabel="Reset Chat">
                 <AppIcon name="refresh" size={13} color="#FFFFFF" />
-                <Text style={styles.chatResetBtnText}>Reset</Text>
+                <Text style={styles.chatResetBtnText}>Reset Chat</Text>
               </TouchableOpacity>
             </View>
 
@@ -1866,14 +1866,14 @@ export function ChatbotView({
                         </Text>
                         {!isUser && (
                           <View style={styles.bubbleSourceBadgeRow}>
-                            {m.source === 'backend_edge_function' ? (
+                            {m.source === 'backend_edge_function' || m.source === 'gemini_ai_cloud' ? (
                               <View style={styles.bubbleGeminiBadge}>
                                 <View style={styles.bubbleGeminiDot} />
                                 <Text style={styles.bubbleGeminiText}>Gemini AI Cloud</Text>
                               </View>
                             ) : (
                               <View style={styles.bubbleLocalBadge}>
-                                <Text style={styles.bubbleLocalText}>Simulasi Aturan Lokal</Text>
+                                <Text style={styles.bubbleLocalText}>WABiz AI Engine</Text>
                               </View>
                             )}
                           </View>

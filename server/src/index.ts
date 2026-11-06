@@ -315,7 +315,7 @@ app.post('/api/disconnect', sensitiveRateLimiter, authenticateAndAuthorize({ req
   res.json({
     success: true,
     data: result,
-    message: result.message,
+    message: (result as any).message,
   });
 });
 
@@ -331,7 +331,7 @@ app.post('/api/logout', sensitiveRateLimiter, authenticateAndAuthorize({ require
   res.json({
     success: true,
     data: result,
-    message: result.message,
+    message: (result as any).message,
   });
 });
 
@@ -545,7 +545,7 @@ app.post('/api/campaigns/create', sensitiveRateLimiter, authenticateAndAuthorize
   res.json({
     success: true,
     data: result,
-    message: result.message,
+    message: (result as any).message,
   });
 });
 
@@ -569,7 +569,7 @@ app.post('/api/campaigns/:id/cancel', authenticateAndAuthorize({ requiredRole: '
   res.json({
     success: true,
     data: result,
-    message: result.message,
+    message: (result as any).message,
   });
 });
 
@@ -593,7 +593,7 @@ app.get('/api/campaigns/:id/recipients', authenticateAndAuthorize({ requiredRole
   res.json({
     success: true,
     data: result,
-    message: result.message,
+    message: (result as any).message,
   });
 });
 
@@ -623,7 +623,7 @@ app.delete('/api/conversations/:id', sensitiveRateLimiter, authenticateAndAuthor
   res.json({
     success: true,
     data: result,
-    message: result.message,
+    message: (result as any).message,
   });
 });
 
@@ -653,7 +653,7 @@ app.delete('/api/team-members/:id', sensitiveRateLimiter, authenticateAndAuthori
   res.json({
     success: true,
     data: result,
-    message: result.message,
+    message: (result as any).message,
   });
 });
 
@@ -677,7 +677,7 @@ app.delete('/api/campaigns/:id', sensitiveRateLimiter, authenticateAndAuthorize(
   res.json({
     success: true,
     data: result,
-    message: result.message,
+    message: (result as any).message,
   });
 });
 
