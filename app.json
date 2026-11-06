@@ -1,8 +1,9 @@
 {
   "expo": {
-    "name": "wa-biz",
+    "name": "WABiz",
     "slug": "wa-biz",
-    "version": "1.0.0",
+    "version": "1.0.2",
+    "scheme": "wabiz",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -11,16 +12,32 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#0F172A",
+        "foregroundImage": "./assets/android-icon-foreground.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.ibnumrf.wabiz"
+      "package": "com.ibnumrf.wabiz",
+      "versionCode": 2
+    },
+    "androidStatusBar": {
+      "barStyle": "dark-content",
+      "backgroundColor": "#FFFFFF",
+      "translucent": false
+    },
+    "androidNavigationBar": {
+      "visible": "always",
+      "barStyle": "dark-content",
+      "backgroundColor": "#FFFFFF"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/favicon.png",
+      "name": "WABiz",
+      "shortName": "WABiz",
+      "themeColor": "#124E3F",
+      "backgroundColor": "#F5F7F6",
+      "description": "Platform WhatsApp Business Management",
+      "display": "standalone",
+      "orientation": "portrait"
     },
     "extra": {
       "eas": {

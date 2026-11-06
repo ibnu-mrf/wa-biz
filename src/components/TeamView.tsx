@@ -8,10 +8,12 @@ import {
   TextInput,
   Modal,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { COLORS, AppIcon } from '../theme';
-import { deleteTeamMemberClient } from '../lib/whatsappClient';
+import { COLORS, AppIcon, SHADOWS, useTheme, ThemePalette } from '../theme';
+import { notifyTeamEvent } from '../lib/notifications';
+import { formatErrorUserMessage } from '../lib/errorHandler';
 
 // ==========================================
 // TIPE DATA TIM CUSTOMER SERVICE (SUPABASE)
@@ -99,73 +101,74 @@ function getAvatarBg(name: string): string {
 
 // Helper terjemahan error Supabase ke Bahasa Indonesia
 export function translateTeamError(errMsg: string): string {
-  const lower = errMsg.toLowerCase();
-  if (lower.includes('duplicate') || lower.includes('unique') || lower.includes('23505')) {
-    return 'Alamat email ini sudah terdaftar sebagai anggota tim dalam organisasi Anda.';
-  }
-  if (lower.includes('permission denied') || lower.includes('policy') || lower.includes('42501')) {
-    return 'Akses ditolak oleh kebijakan keamanan (RLS). Hanya pemilik (owner) atau admin organisasi yang diizinkan mengelola anggota tim.';
-  }
-  if (lower.includes('foreign key') || lower.includes('violates foreign key')) {
-    return 'Organisasi tidak valid atau tidak ditemukan.';
-  }
-  if (lower.includes('network') || lower.includes('fetch') || lower.includes('connection')) {
-    return 'Gagal terhubung ke database Supabase. Periksa koneksi internet Anda.';
-  }
-  return errMsg || 'Terjadi kendala saat memproses data anggota tim.';
+  return formatErrorUserMessage(errMsg, { entityName: 'anggota tim', isWorker: false });
 }
 
 // ==========================================
 // BADGE KOMPONEN: STATUS, PERAN & DEPARTEMEN
 // ==========================================
 export function CsStatusBadge({ isActive }: { isActive: boolean }) {
+  const { isDark, colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   if (isActive) {
     return (
-      <View style={[styles.statusBadge, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
+      <View style={[styles.statusBadge, { backgroundColor: isDark ? 'rgba(16, 185, 129, 0.15)' : '#ECFDF5', borderColor: isDark ? 'rgba(16, 185, 129, 0.3)' : '#A7F3D0' }]}>
         <View style={[styles.statusDot, { backgroundColor: '#10B981' }]} />
-        <Text style={[styles.statusBadgeText, { color: '#047857' }]}>Aktif</Text>
+        <Text style={[styles.statusBadgeText, { color: isDark ? '#6EE7B7' : '#047857' }]}>Aktif</Text>
       </View>
     );
   }
   return (
-    <View style={[styles.statusBadge, { backgroundColor: '#F1F5F9', borderColor: '#E2E8F0' }]}>
+    <View style={[styles.statusBadge, { backgroundColor: isDark ? 'rgba(148, 163, 184, 0.12)' : '#F1F5F9', borderColor: isDark ? 'rgba(148, 163, 184, 0.25)' : '#E2E8F0' }]}>
       <View style={[styles.statusDot, { backgroundColor: '#94A3B8' }]} />
-      <Text style={[styles.statusBadgeText, { color: '#64748B' }]}>Tidak Aktif</Text>
+      <Text style={[styles.statusBadgeText, { color: isDark ? '#94A3B8' : '#64748B' }]}>Tidak Aktif</Text>
     </View>
   );
 }
 
 export function CsRoleBadge({ role }: { role: string }) {
+  const { isDark, colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   let bg = '#F1F5F9';
   let text = '#475569';
   let border = '#E2E8F0';
 
   const r = role.toLowerCase();
-  if (r.includes('admin')) {
-    bg = '#F5F3FF';
-    text = '#6D28D9';
-    border = '#DDD6FE';
+  if (r.includes('owner')) {
+    bg = isDark ? 'rgba(45, 212, 191, 0.18)' : '#CCFBF1';
+    text = isDark ? '#2DD4BF' : '#0D9488';
+    border = isDark ? 'rgba(45, 212, 191, 0.45)' : '#99F6E4';
+  } else if (r.includes('admin')) {
+    bg = isDark ? 'rgba(109, 40, 217, 0.2)' : '#F5F3FF';
+    text = isDark ? '#C4B5FD' : '#6D28D9';
+    border = isDark ? 'rgba(109, 40, 217, 0.4)' : '#DDD6FE';
   } else if (r.includes('supervisor')) {
-    bg = '#E0F2FE';
-    text = '#0369A1';
-    border = '#BAE6FD';
+    bg = isDark ? 'rgba(3, 105, 161, 0.2)' : '#E0F2FE';
+    text = isDark ? '#7DD3FC' : '#0369A1';
+    border = isDark ? 'rgba(3, 105, 161, 0.4)' : '#BAE6FD';
   } else {
-    bg = '#EAF6F0';
-    text = '#0E7A4E';
-    border = '#C1E6D3';
+    bg = isDark ? 'rgba(14, 122, 78, 0.2)' : '#EAF6F0';
+    text = isDark ? '#6EE7B7' : '#0E7A4E';
+    border = isDark ? 'rgba(14, 122, 78, 0.4)' : '#C1E6D3';
   }
 
   return (
     <View style={[styles.roleBadge, { backgroundColor: bg, borderColor: border }]}>
-      <Text style={[styles.roleBadgeText, { color: text }]}>{role}</Text>
+      <Text style={[styles.roleBadgeText, { color: text }]} numberOfLines={1}>
+        {role}
+      </Text>
     </View>
   );
 }
 
 export function CsDepartmentBadge({ department }: { department: string }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.deptBadge}>
-      <Text style={styles.deptBadgeText}>{department}</Text>
+      <Text style={styles.deptBadgeText} numberOfLines={1}>
+        {department}
+      </Text>
     </View>
   );
 }
@@ -176,6 +179,7 @@ export function CsDepartmentBadge({ department }: { department: string }) {
 export interface TeamViewProps {
   organizationId?: string;
   currentUserId?: string;
+  currentUserRole?: string | null;
   teamMembers?: TeamMember[];
   setTeamMembers?: React.Dispatch<React.SetStateAction<TeamMember[]>>;
   isDesktop?: boolean;
@@ -184,7 +188,8 @@ export interface TeamViewProps {
 
 export function TeamView({
   organizationId,
-  currentUserId: _currentUserId,
+  currentUserId,
+  currentUserRole,
   teamMembers: externalTeamMembers,
   setTeamMembers: externalSetTeamMembers,
   isDesktop = true,
@@ -198,8 +203,8 @@ export function TeamView({
   const effectiveOrgId = organizationId;
 
   // Role Pengguna Saat Ini dalam Organisasi
-  const [userRole, setUserRole] = useState<'owner' | 'admin' | 'member' | string | null>(null);
-  const isOwnerOrAdmin = userRole === 'owner' || userRole === 'admin' || userRole === null;
+  const [fetchedUserRole, setFetchedUserRole] = useState<'owner' | 'admin' | 'member' | string | null>(null);
+  const userRole = currentUserRole ?? fetchedUserRole;
 
   // Async States
   const [isLoading, setIsLoading] = useState<boolean>(Boolean(organizationId));
@@ -241,18 +246,18 @@ export function TeamView({
 
     const checkRole = async () => {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user || ignore) return;
+        const userId = currentUserId || (await supabase.auth.getUser()).data.user?.id;
+        if (!userId || ignore) return;
 
         const { data, error } = await supabase
           .from('organization_members')
           .select('role')
           .eq('organization_id', effectiveOrgId)
-          .eq('user_id', user.id)
+          .eq('user_id', userId)
           .maybeSingle();
 
         if (!ignore && !error && data) {
-          setUserRole(data.role);
+          setFetchedUserRole(data.role);
         }
       } catch (e) {
         console.error('Error fetching user role:', e);
@@ -263,7 +268,7 @@ export function TeamView({
     return () => {
       ignore = true;
     };
-  }, [effectiveOrgId]);
+  }, [effectiveOrgId, currentUserId]);
 
   // Muat Anggota Tim dari Supabase public.team_members
   const fetchTeamMembers = useCallback(
@@ -579,6 +584,17 @@ export function TeamView({
           type: 'success',
           text: `Data anggota "${formFullName.trim()}" berhasil diperbarui.`,
         });
+
+        if (effectiveOrgId && currentUserId) {
+          notifyTeamEvent({
+            organizationId: effectiveOrgId,
+            userId: currentUserId,
+            memberId: activeMember.id,
+            fullName: formFullName.trim(),
+            action: 'updated',
+            extraInfo: `${formDept} - ${formRole}`,
+          }).catch((e) => console.warn('[TeamView] Gagal membuat notifikasi update anggota:', e));
+        }
       } else {
         // Operasi INSERT ke Supabase
         const { data: newRow, error: insertError } = await supabase
@@ -622,6 +638,16 @@ export function TeamView({
             isDemo: false,
           };
           setTeamMembers((prev) => [newItem, ...prev]);
+          if (effectiveOrgId && currentUserId) {
+            notifyTeamEvent({
+              organizationId: effectiveOrgId,
+              userId: currentUserId,
+              memberId: newRow.id,
+              fullName: newRow.full_name,
+              action: 'added',
+              extraInfo: `${newRow.department || 'Umum'} - ${newRow.role}`,
+            }).catch((e) => console.warn('[TeamView] Gagal membuat notifikasi anggota tim:', e));
+          }
         }
 
         setFeedbackMsg({
@@ -689,6 +715,17 @@ export function TeamView({
             ? `Anggota tim "${activeMember.fullName}" telah diaktifkan kembali.`
             : `Anggota tim "${activeMember.fullName}" telah dinonaktifkan.`,
         });
+
+        if (effectiveOrgId && currentUserId) {
+          notifyTeamEvent({
+            organizationId: effectiveOrgId,
+            userId: currentUserId,
+            memberId: activeMember.id,
+            fullName: activeMember.fullName,
+            action: 'status_updated',
+            extraInfo: nextState ? 'Aktif' : 'Nonaktif',
+          }).catch((e) => console.warn('[TeamView] Gagal membuat notifikasi toggle status:', e));
+        }
       }
 
       setIsDeactivateModalOpen(false);
@@ -728,7 +765,7 @@ export function TeamView({
     setDeleteError(null);
   };
 
-  // Konfirmasi Eksekusi Hapus Anggota
+  // Konfirmasi Eksekusi Hapus Anggota (Menggunakan Supabase Client langsung dengan RLS & Tenant Isolation)
   const handleConfirmDelete = async () => {
     if (!memberToDelete || isDeleting) return;
     if (!memberToDelete.isDemo && !effectiveOrgId) {
@@ -743,16 +780,29 @@ export function TeamView({
 
     try {
       if (!targetMember.isDemo) {
-        // Data persisten: wajib dihapus melalui backend terautentikasi dengan validasi tenant
-        const clientRes = await deleteTeamMemberClient(targetMember.id, effectiveOrgId);
-        if (!clientRes.success) {
-          setDeleteError(clientRes.error || 'Gagal menghapus anggota tim melalui backend worker.');
+        // 1. Validasi hak akses Owner atau Admin organisasi
+        if (userRole === 'member') {
+          setDeleteError('Akses dibatasi: Hanya Owner atau Admin organisasi yang berhak menghapus anggota tim.');
+          setIsDeleting(false);
+          return;
+        }
+
+        // 2. Hapus langsung melalui Supabase Client dengan RLS & filter organization_id
+        const { error: delErr } = await supabase
+          .from('team_members')
+          .delete()
+          .eq('id', targetMember.id)
+          .eq('organization_id', effectiveOrgId);
+
+        if (delErr) {
+          console.error('[Delete Team Member] Supabase delete error:', delErr.message);
+          setDeleteError(translateTeamError(delErr.message));
           setIsDeleting(false);
           return;
         }
       }
 
-      // Hapus dari state lokal
+      // Hapus dari state lokal HANYA setelah Supabase mengonfirmasi keberhasilan
       setTeamMembers((prev) => prev.filter((m) => m.id !== targetMember.id));
 
       // Jika modal detail sedang terbuka untuk anggota ini, tutup modal detail
@@ -772,6 +822,16 @@ export function TeamView({
       });
       setTimeout(() => setFeedbackMsg(null), 4000);
 
+      if (effectiveOrgId && currentUserId) {
+        notifyTeamEvent({
+          organizationId: effectiveOrgId,
+          userId: currentUserId,
+          memberId: targetMember.id,
+          fullName: targetMember.fullName,
+          action: 'deleted',
+        }).catch((e) => console.warn('[TeamView] Gagal membuat notifikasi hapus anggota:', e));
+      }
+
       // Sinkronisasi data terbaru secara silent jika online
       if (!targetMember.isDemo && effectiveOrgId) {
         fetchTeamMembers(effectiveOrgId);
@@ -788,32 +848,57 @@ export function TeamView({
   const activeFetchError =
     fetchError || (!effectiveOrgId ? 'Organisasi belum dipilih atau tidak aktif. Silakan pilih workspace Anda.' : null);
 
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
-    <View style={styles.pageContainer}>
+    <View style={[styles.pageContainer, { backgroundColor: colors.background }]}>
       {/* ========================================== */}
       {/* 1. HEADER HALAMAN                          */}
       {/* ========================================== */}
-      <View style={styles.pageHeader}>
-        <View style={styles.headerLeft}>
+      <View style={[styles.pageHeader, !isDesktop && styles.pageHeaderMobile, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
+        <View style={[styles.headerLeft, !isDesktop && styles.headerLeftMobile]}>
           <View style={styles.headerTitleRow}>
-            <Text style={styles.headerTitle}>Tim Customer Service</Text>
+            <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Tim Customer Service</Text>
             <View style={styles.memberCountPill}>
               <Text style={styles.memberCountPillText}>{stats.total} Anggota</Text>
             </View>
-            {userRole && (
-              <View style={[styles.userRolePill, isOwnerOrAdmin ? styles.userRoleAdmin : styles.userRoleMember]}>
-                <Text style={styles.userRoleText}>Peran Anda: {userRole.toUpperCase()}</Text>
+            {userRole ? (
+              <View style={styles.userRoleContainer}>
+                <Text style={styles.userRolePrefixText}>Peran Anda:</Text>
+                <View
+                  style={[
+                    styles.userRoleBadge,
+                    userRole.toLowerCase() === 'owner'
+                      ? styles.userRoleBadgeOwner
+                      : userRole.toLowerCase() === 'admin'
+                      ? styles.userRoleBadgeAdmin
+                      : styles.userRoleBadgeMember,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.userRoleBadgeText,
+                      userRole.toLowerCase() === 'owner'
+                        ? styles.userRoleBadgeTextOwner
+                        : userRole.toLowerCase() === 'admin'
+                        ? styles.userRoleBadgeTextAdmin
+                        : styles.userRoleBadgeTextMember,
+                    ]}
+                  >
+                    {userRole.toUpperCase()}
+                  </Text>
+                </View>
               </View>
-            )}
+            ) : null}
           </View>
-          <Text style={styles.headerSubtitle}>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
             Kelola petugas CS, alokasi departemen, status ketersediaan, dan pembagian tugas penanganan percakapan Supabase.
           </Text>
         </View>
 
-        <View style={styles.headerActions}>
+        <View style={[styles.headerActions, !isDesktop && styles.headerActionsMobile]}>
           <TouchableOpacity
-            style={styles.btnPrimary}
+            style={[styles.btnPrimary, !isDesktop && styles.btnPrimaryMobile]}
             activeOpacity={0.8}
             onPress={handleOpenAddForm}
           >
@@ -879,27 +964,27 @@ export function TeamView({
       {/* 2. KARTU STATISTIK RINGKASAN TIM           */}
       {/* ========================================== */}
       <View style={styles.statsGrid}>
-        <View style={styles.statCard}>
+        <View style={[styles.statCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
           <Text style={styles.statLabel}>Total Anggota Tim</Text>
           <Text style={styles.statVal}>{stats.total}</Text>
           <Text style={styles.statSub}>Petugas terdaftar di Supabase</Text>
         </View>
 
-        <View style={styles.statCard}>
+        <View style={[styles.statCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
           <Text style={styles.statLabel}>Petugas Aktif</Text>
           <Text style={[styles.statVal, { color: '#047857' }]}>{stats.active}</Text>
           <Text style={styles.statSub}>Siap menerima alokasi pesan</Text>
         </View>
 
-        <View style={styles.statCard}>
+        <View style={[styles.statCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
           <Text style={styles.statLabel}>Tidak Aktif</Text>
           <Text style={[styles.statVal, { color: '#64748B' }]}>{stats.inactive}</Text>
           <Text style={styles.statSub}>Non-aktif / dinonaktifkan</Text>
         </View>
 
-        <View style={styles.statCard}>
+        <View style={[styles.statCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
           <Text style={styles.statLabel}>Departemen</Text>
-          <Text style={[styles.statVal, { color: COLORS.forestDark }]}>{CS_DEPARTMENTS.length}</Text>
+          <Text style={[styles.statVal, { color: colors.accent }]}>{CS_DEPARTMENTS.length}</Text>
           <Text style={styles.statSub}>Pilihan divisi penanganan</Text>
         </View>
       </View>
@@ -907,10 +992,10 @@ export function TeamView({
       {/* ========================================== */}
       {/* 3. RINGKASAN PEMBAGIAN TUGAS DEPARTEMEN    */}
       {/* ========================================== */}
-      <View style={styles.deptSummaryCard}>
+      <View style={[styles.deptSummaryCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
         <View style={styles.deptSummaryHeader}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <AppIcon name="team" size={16} color={COLORS.forestDark} />
+            <AppIcon name="team" size={16} color={colors.textPrimary} />
             <Text style={styles.deptSummaryTitle}>Ringkasan Pembagian Tugas Departemen</Text>
           </View>
           <Text style={styles.deptSummaryHint}>Klik departemen untuk memfilter daftar petugas</Text>
@@ -940,10 +1025,10 @@ export function TeamView({
                 </View>
                 <View style={styles.deptItemNumbers}>
                   <Text style={styles.deptTotalText}>
-                    <Text style={{ fontWeight: '700', color: COLORS.textDark }}>{item.total}</Text> Anggota
+                    <Text style={{ fontWeight: '700', color: colors.textPrimary }}>{item.total}</Text> Anggota
                   </Text>
                   <Text style={styles.deptActiveText}>
-                    • <Text style={{ color: '#047857', fontWeight: '600' }}>{item.active}</Text> Aktif
+                    • <Text style={{ color: colors.isDark ? '#34D399' : '#047857', fontWeight: '600' }}>{item.active}</Text> Aktif
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -955,17 +1040,23 @@ export function TeamView({
       {/* ========================================== */}
       {/* 4. BAR PENCARIAN & FILTER                  */}
       {/* ========================================== */}
-      <View style={styles.filterSectionCard}>
+      <View style={[styles.filterSectionCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
         {/* Search Bar */}
         <View style={styles.searchBarRow}>
-          <View style={styles.searchBox}>
+          <View
+            style={styles.searchBox}
+            // @ts-ignore
+            dataSet={{ inputContainer: 'true' }}
+          >
             <AppIcon name="search" size={16} color={COLORS.textSecondary} />
             <TextInput
               style={styles.searchInput}
               placeholder="Cari berdasarkan nama, email, departemen, atau peran..."
-              placeholderTextColor={COLORS.textMuted}
+              placeholderTextColor={colors.textPlaceholder}
               value={searchQuery}
               onChangeText={setSearchQuery}
+              // @ts-ignore
+              dataSet={{ embedded: 'true' }}
             />
             {searchQuery.trim().length > 0 && (
               <TouchableOpacity onPress={() => setSearchQuery('')}>
@@ -980,16 +1071,16 @@ export function TeamView({
               onPress={handleResetFilters}
               activeOpacity={0.8}
             >
-              <AppIcon name="refresh" size={13} color={COLORS.forestDark} />
+              <AppIcon name="refresh" size={13} color={colors.textPrimary} />
               <Text style={styles.btnResetFilterText}>Reset Filter</Text>
             </TouchableOpacity>
           )}
         </View>
 
-        {/* Filter Pills: Departemen */}
-        <View style={styles.filterPillGroup}>
+        {/* Filter Section 1: Departemen */}
+        <View style={styles.filterSection}>
           <Text style={styles.filterGroupLabel}>Departemen:</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterScrollContent}>
             {['Semua', ...CS_DEPARTMENTS].map((dept) => {
               const isSelected = selectedDeptFilter === dept;
               return (
@@ -997,6 +1088,7 @@ export function TeamView({
                   key={dept}
                   style={[styles.filterChip, isSelected && styles.filterChipActive]}
                   onPress={() => setSelectedDeptFilter(dept)}
+                  activeOpacity={0.7}
                 >
                   <Text style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}>
                     {dept}
@@ -1007,10 +1099,10 @@ export function TeamView({
           </ScrollView>
         </View>
 
-        {/* Filter Pills: Status & Peran */}
-        <View style={styles.filterSubRow}>
-          <View style={styles.filterPillGroupSub}>
-            <Text style={styles.filterGroupLabel}>Status:</Text>
+        {/* Filter Section 2: Status */}
+        <View style={styles.filterSection}>
+          <Text style={styles.filterGroupLabel}>Status:</Text>
+          <View style={styles.filterChipsWrap}>
             {['Semua', 'Aktif', 'Tidak Aktif'].map((st) => {
               const isSelected = selectedStatusFilter === st;
               return (
@@ -1018,6 +1110,7 @@ export function TeamView({
                   key={st}
                   style={[styles.filterChip, isSelected && styles.filterChipActive]}
                   onPress={() => setSelectedStatusFilter(st)}
+                  activeOpacity={0.7}
                 >
                   <Text style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}>
                     {st}
@@ -1026,31 +1119,49 @@ export function TeamView({
               );
             })}
           </View>
+        </View>
 
-          <View style={styles.filterPillGroupSub}>
-            <Text style={styles.filterGroupLabel}>Peran:</Text>
+        {/* Filter Section 3: Peran */}
+        <View style={styles.filterSection}>
+          <Text style={styles.filterGroupLabel}>Peran:</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.filterScrollContentRole}
+          >
             {['Semua', ...CS_ROLES].map((rl) => {
               const isSelected = selectedRoleFilter === rl;
               return (
                 <TouchableOpacity
                   key={rl}
-                  style={[styles.filterChip, isSelected && styles.filterChipActive]}
+                  style={[
+                    styles.filterChip,
+                    styles.filterChipRole,
+                    isSelected && styles.filterChipActive,
+                  ]}
                   onPress={() => setSelectedRoleFilter(rl)}
+                  activeOpacity={0.7}
                 >
-                  <Text style={[styles.filterChipText, isSelected && styles.filterChipTextActive]}>
+                  <Text
+                    style={[
+                      styles.filterChipText,
+                      isSelected && styles.filterChipTextActive,
+                    ]}
+                    numberOfLines={1}
+                  >
                     {rl}
                   </Text>
                 </TouchableOpacity>
               );
             })}
-          </View>
+          </ScrollView>
         </View>
 
         {/* Dynamic Count Indicator */}
         <View style={styles.filterFooterRow}>
           <Text style={styles.filterCountText}>
-            Menampilkan <Text style={{ fontWeight: '700', color: COLORS.textDark }}>{filteredMembers.length}</Text> dari{' '}
-            <Text style={{ fontWeight: '700', color: COLORS.textDark }}>{teamMembers.length}</Text> anggota tim
+            Menampilkan <Text style={{ fontWeight: '700', color: colors.textPrimary }}>{filteredMembers.length}</Text> dari{' '}
+            <Text style={{ fontWeight: '700', color: colors.textPrimary }}>{teamMembers.length}</Text> anggota tim
           </Text>
         </View>
       </View>
@@ -1066,7 +1177,7 @@ export function TeamView({
       ) : filteredMembers.length === 0 ? (
         <View style={styles.emptyCard}>
           <View style={styles.emptyIconCircle}>
-            <AppIcon name="users" size={26} color={COLORS.forestDark} />
+            <AppIcon name="users" size={26} color={colors.textPrimary} />
           </View>
           <Text style={styles.emptyTitle}>
             {teamMembers.length === 0 ? 'Belum Ada Anggota Tim CS' : 'Anggota Tim Tidak Ditemukan'}
@@ -1083,15 +1194,15 @@ export function TeamView({
             </TouchableOpacity>
           ) : (
             <TouchableOpacity style={styles.btnSecondary} onPress={handleResetFilters}>
-              <AppIcon name="refresh" size={14} color={COLORS.forestDark} />
+              <AppIcon name="refresh" size={14} color={colors.textPrimary} />
               <Text style={styles.btnSecondaryText}>Reset Filter & Pencarian</Text>
             </TouchableOpacity>
           )}
         </View>
       ) : isDesktop ? (
         /* TABEL DESKTOP */
-        <View style={styles.tableWrapper}>
-          <View style={styles.tableHeadRow}>
+        <View style={[styles.tableWrapper, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
+          <View style={[styles.tableHeadRow, { backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border }]}>
             <Text style={[styles.thCell, { flex: 2.2 }]}>Nama Anggota</Text>
             <Text style={[styles.thCell, { flex: 2.0 }]}>Email</Text>
             <Text style={[styles.thCell, { flex: 1.6 }]}>Departemen</Text>
@@ -1110,23 +1221,23 @@ export function TeamView({
                 ]}
               >
                 {/* Kolom 1: Nama & Avatar */}
-                <View style={[styles.tdCell, { flex: 2.2, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
+                <View style={[styles.tdCell, { flex: 2.2, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
                   <View style={[styles.avatarCircle, { backgroundColor: getAvatarBg(member.fullName) }]}>
                     <Text style={styles.avatarText}>{getInitials(member.fullName)}</Text>
                   </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.memberNameText} numberOfLines={1}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.memberNameText} numberOfLines={1} ellipsizeMode="tail">
                       {member.fullName}
                     </Text>
                     {member.createdAt ? (
-                      <Text style={styles.memberDateText}>Terdaftar {member.createdAt}</Text>
+                      <Text style={styles.memberDateText} numberOfLines={1}>Terdaftar {member.createdAt}</Text>
                     ) : null}
                   </View>
                 </View>
 
                 {/* Kolom 2: Email & WhatsApp */}
-                <View style={[styles.tdCell, { flex: 2.0 }]}>
-                  <Text style={styles.emailText} numberOfLines={1}>
+                <View style={[styles.tdCell, { flex: 2.0, minWidth: 0 }]}>
+                  <Text style={styles.emailText} numberOfLines={1} ellipsizeMode="middle">
                     {member.email ? member.email : 'Belum ada email'}
                   </Text>
                   {member.phone ? (
@@ -1137,22 +1248,22 @@ export function TeamView({
                 </View>
 
                 {/* Kolom 3: Departemen */}
-                <View style={[styles.tdCell, { flex: 1.6 }]}>
+                <View style={[styles.tdCell, { flex: 1.6, minWidth: 0 }]}>
                   <CsDepartmentBadge department={member.department} />
                 </View>
 
                 {/* Kolom 4: Peran */}
-                <View style={[styles.tdCell, { flex: 1.4 }]}>
+                <View style={[styles.tdCell, { flex: 1.4, minWidth: 0 }]}>
                   <CsRoleBadge role={member.role} />
                 </View>
 
                 {/* Kolom 5: Status */}
-                <View style={[styles.tdCell, { flex: 1.3 }]}>
+                <View style={[styles.tdCell, { flex: 1.3, minWidth: 0 }]}>
                   <CsStatusBadge isActive={member.isActive} />
                 </View>
 
                 {/* Kolom 6: Aksi */}
-                <View style={[styles.tdCell, { flex: 1.9, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }]}>
+                <View style={[styles.tdCell, { flex: 1.9, minWidth: 0, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }]}>
                   <TouchableOpacity
                     style={styles.actionIconBtn}
                     onPress={() => {
@@ -1161,7 +1272,7 @@ export function TeamView({
                     }}
                     accessibilityLabel="Lihat Detail"
                   >
-                    <AppIcon name="user" size={14} color={COLORS.forestDark} />
+                    <AppIcon name="user" size={14} color={colors.textPrimary} />
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -1169,7 +1280,7 @@ export function TeamView({
                     onPress={() => handleOpenEditForm(member)}
                     accessibilityLabel="Edit Anggota"
                   >
-                    <AppIcon name="edit" size={14} color={COLORS.forestDark} />
+                    <AppIcon name="edit" size={14} color={colors.textPrimary} />
                   </TouchableOpacity>
 
                   <TouchableOpacity
@@ -1204,36 +1315,46 @@ export function TeamView({
         <View style={styles.mobileCardList}>
           {filteredMembers.map((member) => {
             return (
-              <View key={member.id} style={styles.mobileCard}>
+              <View key={member.id} style={[styles.mobileCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
                 <View style={styles.mobileCardTop}>
-                  <View style={[styles.avatarCircle, { backgroundColor: getAvatarBg(member.fullName) }]}>
-                    <Text style={styles.avatarText}>{getInitials(member.fullName)}</Text>
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.memberNameText} numberOfLines={1}>
-                      {member.fullName}
-                    </Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                      <CsRoleBadge role={member.role} />
-                      <CsStatusBadge isActive={member.isActive} />
+                  <View style={styles.mobileCardHeaderLeft}>
+                    <View style={[styles.avatarCircle, { backgroundColor: getAvatarBg(member.fullName) }]}>
+                      <Text style={styles.avatarText}>{getInitials(member.fullName)}</Text>
+                    </View>
+                    <View style={styles.mobileCardHeaderInfo}>
+                      <Text style={styles.memberNameText} numberOfLines={1} ellipsizeMode="tail">
+                        {member.fullName}
+                      </Text>
                     </View>
                   </View>
+                  <CsStatusBadge isActive={member.isActive} />
                 </View>
 
                 <View style={styles.mobileCardBody}>
                   <View style={styles.mobileInfoRow}>
+                    <Text style={styles.mobileInfoLabel}>Peran Organisasi:</Text>
+                    <View style={styles.mobileBadgeWrapper}>
+                      <CsRoleBadge role={member.role} />
+                    </View>
+                  </View>
+
+                  <View style={styles.mobileInfoRow}>
                     <Text style={styles.mobileInfoLabel}>Departemen:</Text>
-                    <CsDepartmentBadge department={member.department} />
+                    <View style={styles.mobileBadgeWrapper}>
+                      <CsDepartmentBadge department={member.department} />
+                    </View>
                   </View>
 
                   <View style={styles.mobileInfoRow}>
                     <Text style={styles.mobileInfoLabel}>Email:</Text>
-                    <Text style={styles.emailText}>{member.email || 'Belum ada email'}</Text>
+                    <Text style={[styles.emailText, styles.mobileInfoValue]} numberOfLines={1} ellipsizeMode="middle">
+                      {member.email || 'Belum ada email'}
+                    </Text>
                   </View>
 
                   <View style={styles.mobileInfoRow}>
                     <Text style={styles.mobileInfoLabel}>WhatsApp:</Text>
-                    <Text style={{ fontSize: 11, color: member.phone ? '#16A36A' : COLORS.textMuted, fontWeight: '600' }}>
+                    <Text style={styles.mobilePhoneValue} numberOfLines={1}>
                       {member.phone ? `+${member.phone}` : 'Belum diisi'}
                     </Text>
                   </View>
@@ -1247,7 +1368,7 @@ export function TeamView({
                       setIsDetailModalOpen(true);
                     }}
                   >
-                    <AppIcon name="user" size={13} color={COLORS.forestDark} />
+                    <AppIcon name="user" size={13} color={colors.textPrimary} />
                     <Text style={styles.mobileBtnSecondaryText}>Detail</Text>
                   </TouchableOpacity>
 
@@ -1255,7 +1376,7 @@ export function TeamView({
                     style={styles.mobileBtnSecondary}
                     onPress={() => handleOpenEditForm(member)}
                   >
-                    <AppIcon name="edit" size={13} color={COLORS.forestDark} />
+                    <AppIcon name="edit" size={13} color={colors.textPrimary} />
                     <Text style={styles.mobileBtnSecondaryText}>Edit</Text>
                   </TouchableOpacity>
 
@@ -1312,7 +1433,7 @@ export function TeamView({
 
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
-              <View>
+              <View style={{ flex: 1, minWidth: 0, marginRight: 10 }}>
                 <Text style={styles.modalTitle}>
                   {activeMember ? 'Edit Data Anggota Tim CS' : 'Tambah Anggota Tim CS Baru'}
                 </Text>
@@ -1326,7 +1447,7 @@ export function TeamView({
                 style={styles.modalCloseBtn}
                 onPress={() => setIsFormModalOpen(false)}
               >
-                <AppIcon name="close" size={16} color={COLORS.textSecondary} />
+                <AppIcon name="close" size={16} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
 
@@ -1352,7 +1473,7 @@ export function TeamView({
                     if (formError) setFormError(null);
                   }}
                   placeholder="Contoh: Siti Aisyah, S.Kom"
-                  placeholderTextColor={COLORS.textMuted}
+                  placeholderTextColor={colors.textPlaceholder}
                 />
               </View>
 
@@ -1369,7 +1490,7 @@ export function TeamView({
                     if (formError) setFormError(null);
                   }}
                   placeholder="nama@perusahaan.com"
-                  placeholderTextColor={COLORS.textMuted}
+                  placeholderTextColor={colors.textPlaceholder}
                   keyboardType="email-address"
                   autoCapitalize="none"
                 />
@@ -1388,7 +1509,7 @@ export function TeamView({
                     if (formError) setFormError(null);
                   }}
                   placeholder="Contoh: 085641886993 atau +6285641886993"
-                  placeholderTextColor={COLORS.textMuted}
+                  placeholderTextColor={colors.textPlaceholder}
                   keyboardType="phone-pad"
                 />
               </View>
@@ -1527,7 +1648,7 @@ export function TeamView({
           {activeMember && (
             <View style={[styles.modalCard, { maxWidth: 520 }]}>
               <View style={styles.modalHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1, minWidth: 0, marginRight: 8 }}>
                   <View
                     style={[
                       styles.avatarCircleLarge,
@@ -1536,16 +1657,16 @@ export function TeamView({
                   >
                     <Text style={styles.avatarTextLarge}>{getInitials(activeMember.fullName)}</Text>
                   </View>
-                  <View>
-                    <Text style={styles.modalTitle}>{activeMember.fullName}</Text>
-                    <Text style={styles.modalSubtitle}>{activeMember.email || 'Email belum diisi'}</Text>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.modalTitle} numberOfLines={1} ellipsizeMode="tail">{activeMember.fullName}</Text>
+                    <Text style={styles.modalSubtitle} numberOfLines={1} ellipsizeMode="middle">{activeMember.email || 'Email belum diisi'}</Text>
                   </View>
                 </View>
                 <TouchableOpacity
                   style={styles.modalCloseBtn}
                   onPress={() => setIsDetailModalOpen(false)}
                 >
-                  <AppIcon name="close" size={16} color={COLORS.textSecondary} />
+                  <AppIcon name="close" size={16} color={colors.textPrimary} />
                 </TouchableOpacity>
               </View>
 
@@ -1630,7 +1751,7 @@ export function TeamView({
           {activeMember && (
             <View style={[styles.modalCard, { maxWidth: 440 }]}>
               <View style={styles.modalHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, marginRight: 8 }}>
                   <View
                     style={[
                       styles.iconCircleWarning,
@@ -1643,7 +1764,7 @@ export function TeamView({
                       color={activeMember.isActive ? '#DC2626' : '#047857'}
                     />
                   </View>
-                  <View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.modalTitle}>
                       {activeMember.isActive ? 'Nonaktifkan Anggota Tim?' : 'Aktifkan Kembali Anggota?'}
                     </Text>
@@ -1654,7 +1775,7 @@ export function TeamView({
                   style={styles.modalCloseBtn}
                   onPress={() => setIsDeactivateModalOpen(false)}
                 >
-                  <AppIcon name="close" size={16} color={COLORS.textSecondary} />
+                  <AppIcon name="close" size={16} color={colors.textPrimary} />
                 </TouchableOpacity>
               </View>
 
@@ -1729,11 +1850,11 @@ export function TeamView({
           {memberToDelete && (
             <View style={[styles.modalCard, { maxWidth: 460 }]}>
               <View style={styles.modalHeader}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 0, marginRight: 8 }}>
                   <View style={[styles.iconCircleWarning, styles.bgDangerLight]}>
                     <AppIcon name="trash" size={18} color="#DC2626" />
                   </View>
-                  <View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={styles.modalTitle}>Hapus Anggota Tim CS?</Text>
                     <Text style={styles.modalSubtitle}>Konfirmasi penghapusan anggota tim organisasi</Text>
                   </View>
@@ -1743,7 +1864,7 @@ export function TeamView({
                   onPress={handleCancelDelete}
                   disabled={isDeleting}
                 >
-                  <AppIcon name="close" size={16} color={COLORS.textSecondary} />
+                  <AppIcon name="close" size={16} color={colors.textPrimary} />
                 </TouchableOpacity>
               </View>
 
@@ -1764,7 +1885,7 @@ export function TeamView({
                   <Text style={styles.deleteMemberEmail} numberOfLines={1}>
                     {memberToDelete.email || 'Email belum diisi'}
                   </Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
                     <CsDepartmentBadge department={memberToDelete.department} />
                     <CsRoleBadge role={memberToDelete.role} />
                   </View>
@@ -1827,7 +1948,7 @@ export function TeamView({
 // ==========================================
 // STYLESHEET RESMI B2B SAAS
 // ==========================================
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemePalette) => StyleSheet.create({
   pageContainer: {
     flex: 1,
     gap: 16,
@@ -1835,10 +1956,10 @@ const styles = StyleSheet.create({
 
   // HEADER
   pageHeader: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 20,
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1846,62 +1967,105 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 16,
   },
+  pageHeaderMobile: {
+    padding: 14,
+    gap: 12,
+  },
   headerLeft: {
     flex: 1,
     minWidth: 260,
   },
+  headerLeftMobile: {
+    minWidth: 0,
+    width: '100%',
+  },
   headerTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     marginBottom: 4,
     flexWrap: 'wrap',
   },
   headerTitle: {
     fontSize: 22,
+    lineHeight: 28,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   memberCountPill: {
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
-    borderRadius: 12,
-    paddingVertical: 2,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingVertical: 3,
     paddingHorizontal: 8,
   },
   memberCountPillText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
-  userRolePill: {
-    borderRadius: 12,
-    paddingVertical: 2,
+  userRoleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: colors.surfaceSecondary,
     paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  userRolePrefixText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  userRoleBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
   },
-  userRoleAdmin: {
-    backgroundColor: '#F5F3FF',
-    borderColor: '#DDD6FE',
+  userRoleBadgeOwner: {
+    backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.2)' : 'rgba(13, 148, 136, 0.12)',
+    borderColor: colors.isDark ? '#2DD4BF' : '#0D9488',
   },
-  userRoleMember: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#E2E8F0',
+  userRoleBadgeAdmin: {
+    backgroundColor: colors.isDark ? 'rgba(129, 140, 248, 0.2)' : 'rgba(99, 102, 241, 0.12)',
+    borderColor: colors.isDark ? '#818CF8' : '#6366F1',
   },
-  userRoleText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: COLORS.forestDark,
+  userRoleBadgeMember: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+  },
+  userRoleBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  userRoleBadgeTextOwner: {
+    color: colors.isDark ? '#2DD4BF' : '#0D9488',
+  },
+  userRoleBadgeTextAdmin: {
+    color: colors.isDark ? '#A5B4FC' : '#4F46E5',
+  },
+  userRoleBadgeTextMember: {
+    color: colors.textPrimary,
   },
   headerSubtitle: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 18,
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
+  },
+  headerActionsMobile: {
+    width: '100%',
   },
 
   // FEEDBACK BANNER
@@ -1915,16 +2079,16 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   feedbackSuccess: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
+    backgroundColor: colors.successBg,
+    borderColor: colors.successBorder,
   },
   feedbackInfo: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accentBorder,
   },
   feedbackWarning: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
+    backgroundColor: colors.warningBg,
+    borderColor: colors.warningBorder,
   },
   feedbackBannerText: {
     fontSize: 13,
@@ -1948,9 +2112,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   btnRetry: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: '#F87171',
+    borderColor: colors.dangerBorder,
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -1958,7 +2122,7 @@ const styles = StyleSheet.create({
   btnRetryText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#DC2626',
+    color: colors.dangerText,
   },
 
   // STATS
@@ -1970,35 +2134,35 @@ const styles = StyleSheet.create({
   statCard: {
     flex: 1,
     minWidth: 160,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 16,
   },
   statLabel: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontWeight: '500',
     marginBottom: 6,
   },
   statVal: {
     fontSize: 24,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 4,
   },
   statSub: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
   },
 
   // DEPARTEMEN SUMMARY
   deptSummaryCard: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 18,
     gap: 14,
   },
@@ -2012,11 +2176,11 @@ const styles = StyleSheet.create({
   deptSummaryTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   deptSummaryHint: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
   },
   deptGrid: {
     flexDirection: 'row',
@@ -2026,16 +2190,16 @@ const styles = StyleSheet.create({
   deptItemCard: {
     flex: 1,
     minWidth: 170,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 7,
     padding: 12,
     gap: 6,
   },
   deptItemCardActive: {
-    borderColor: COLORS.emerald,
-    backgroundColor: COLORS.emeraldSubtle,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSubtle,
   },
   deptItemTop: {
     flexDirection: 'row',
@@ -2045,15 +2209,15 @@ const styles = StyleSheet.create({
   deptItemName: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     flex: 1,
   },
   deptItemNameActive: {
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     fontWeight: '700',
   },
   deptItemActiveBadge: {
-    backgroundColor: COLORS.emerald,
+    backgroundColor: colors.accent,
     borderRadius: 4,
     paddingHorizontal: 4,
     paddingVertical: 1,
@@ -2070,19 +2234,19 @@ const styles = StyleSheet.create({
   },
   deptTotalText: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   deptActiveText: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
 
   // FILTER & SEARCH
   filterSectionCard: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 16,
     gap: 12,
   },
@@ -2095,9 +2259,9 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 10,
     height: 40,
@@ -2106,15 +2270,21 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 13,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     paddingVertical: 0,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   btnResetFilter: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     borderRadius: 6,
     paddingHorizontal: 12,
     height: 40,
@@ -2123,60 +2293,78 @@ const styles = StyleSheet.create({
   btnResetFilterText: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
-  filterPillGroup: {
+  filterSection: {
+    gap: 6,
+    width: '100%',
+  },
+  filterScrollContent: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    paddingRight: 20,
+  },
+  filterScrollContentRole: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingRight: 20,
+  },
+  filterChipsWrap: {
+    flexDirection: 'row',
     flexWrap: 'wrap',
+    gap: 8,
+    alignItems: 'center',
+    width: '100%',
   },
   filterGroupLabel: {
     fontSize: 12,
-    fontWeight: '600',
-    color: COLORS.textSecondary,
-  },
-  filterSubRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 20,
-    alignItems: 'center',
-  },
-  filterPillGroupSub: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    flexWrap: 'wrap',
+    fontWeight: '700',
+    color: colors.textSecondary,
+    marginBottom: 2,
   },
   filterChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surfaceMuted,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
+    minHeight: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    flexShrink: 0,
+  },
+  filterChipRole: {
+    flexShrink: 0,
+    alignSelf: 'flex-start',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
   },
   filterChipActive: {
-    backgroundColor: COLORS.emeraldSubtle,
-    borderColor: COLORS.emeraldBorder,
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accentBorder,
   },
   filterChipText: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    fontWeight: '500',
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontWeight: '600',
+    flexShrink: 0,
   },
   filterChipTextActive: {
-    color: COLORS.forestDark,
+    color: colors.accent,
     fontWeight: '700',
   },
   filterFooterRow: {
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: colors.border,
     paddingTop: 8,
   },
   filterCountText: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
 
   // LOADING & EMPTY
@@ -2184,21 +2372,21 @@ const styles = StyleSheet.create({
     padding: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     gap: 10,
   },
   loadingText: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   emptyCard: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 36,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2208,9 +2396,9 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 6,
@@ -2218,11 +2406,11 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   emptyDesc: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     maxWidth: 420,
     lineHeight: 18,
@@ -2231,25 +2419,26 @@ const styles = StyleSheet.create({
 
   // TABEL DESKTOP
   tableWrapper: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 8,
+    backgroundColor: colors.surfaceCard,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     overflow: 'hidden',
+    ...SHADOWS.card,
   },
   tableHeadRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
   },
   thCell: {
     fontSize: 11,
     fontWeight: '700',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -2259,10 +2448,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
   },
   tableBodyRowAlt: {
-    backgroundColor: '#FAFCFB',
+    backgroundColor: colors.isDark ? 'rgba(255, 255, 255, 0.02)' : '#FAFCFB',
   },
   tdCell: {
     justifyContent: 'center',
@@ -2280,36 +2469,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   memberNameText: {
-    fontSize: 13,
+    fontSize: 13.5,
+    lineHeight: 18,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   memberDateText: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
     marginTop: 1,
   },
   emailText: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    lineHeight: 16,
+    color: colors.textSecondary,
   },
   actionIconBtn: {
     width: 32,
     height: 32,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
   },
   actionIconBtnDanger: {
-    borderColor: '#FECACA',
-    backgroundColor: '#FEF2F2',
+    borderColor: colors.dangerBorder,
+    backgroundColor: colors.dangerBg,
   },
   actionIconBtnSuccess: {
-    borderColor: '#A7F3D0',
-    backgroundColor: '#ECFDF5',
+    borderColor: colors.successBorder,
+    backgroundColor: colors.successBg,
   },
 
   // MOBILE CARDS
@@ -2317,38 +2508,83 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   mobileCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 8,
+    backgroundColor: colors.surfaceCard,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 14,
     gap: 12,
+    ...SHADOWS.card,
   },
   mobileCardTop: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  mobileCardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+    minWidth: 0,
+  },
+  mobileCardHeaderInfo: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
   },
   mobileCardBody: {
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     paddingVertical: 8,
-    gap: 6,
+    gap: 8,
   },
   mobileInfoRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
+    minWidth: 0,
+    flexWrap: 'wrap',
   },
   mobileInfoLabel: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
+    fontWeight: '500',
+    flexShrink: 0,
+    minWidth: 80,
+  },
+  mobileBadgeWrapper: {
+    flexShrink: 1,
+    minWidth: 0,
+    maxWidth: '100%',
+    alignItems: 'flex-end',
+  },
+  mobileInfoValue: {
+    flex: 1,
+    minWidth: 0,
+    textAlign: 'right',
+  },
+  mobilePhoneValue: {
+    fontSize: 11,
+    color: colors.isDark ? '#34D399' : '#047857',
+    fontWeight: '600',
+    flex: 1,
+    minWidth: 0,
+    textAlign: 'right',
   },
   mobileCardActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    gap: 8,
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 10,
+    marginTop: 2,
   },
   mobileBtnSecondary: {
     flexDirection: 'row',
@@ -2357,32 +2593,32 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    backgroundColor: COLORS.surface,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.surfaceCard,
     gap: 5,
   },
   mobileBtnSecondaryText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   mobileBtnDanger: {
-    borderColor: '#FCA5A5',
-    backgroundColor: '#FEF2F2',
+    borderColor: colors.dangerBorder,
+    backgroundColor: colors.dangerBg,
   },
   mobileBtnDangerText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#DC2626',
+    color: colors.dangerText,
   },
   mobileBtnSuccess: {
-    borderColor: '#A7F3D0',
-    backgroundColor: '#ECFDF5',
+    borderColor: colors.successBorder,
+    backgroundColor: colors.successBg,
   },
   mobileBtnSuccessText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#047857',
+    color: colors.successText,
   },
 
   // BADGES
@@ -2391,6 +2627,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 8,
     paddingVertical: 3,
+    minHeight: 22,
     borderRadius: 12,
     borderWidth: 1,
     gap: 5,
@@ -2404,31 +2641,44 @@ const styles = StyleSheet.create({
   statusBadgeText: {
     fontSize: 11,
     fontWeight: '600',
+    lineHeight: 15,
   },
   roleBadge: {
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 3,
+    minHeight: 22,
     borderRadius: 4,
     borderWidth: 1,
     alignSelf: 'flex-start',
+    justifyContent: 'center',
+    alignItems: 'center',
+    maxWidth: '100%',
+    flexShrink: 1,
   },
   roleBadgeText: {
     fontSize: 11,
     fontWeight: '600',
+    lineHeight: 15,
   },
   deptBadge: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     paddingHorizontal: 8,
-    paddingVertical: 2,
+    paddingVertical: 3,
+    minHeight: 22,
     borderRadius: 4,
     alignSelf: 'flex-start',
+    justifyContent: 'center',
+    alignItems: 'center',
+    maxWidth: '100%',
+    flexShrink: 1,
   },
   deptBadgeText: {
     fontSize: 11,
-    color: COLORS.textDark,
-    fontWeight: '500',
+    color: colors.textPrimary,
+    fontWeight: '600',
+    lineHeight: 15,
   },
 
   // BUTTONS
@@ -2441,6 +2691,14 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     gap: 6,
   },
+  btnPrimaryMobile: {
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 42,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
   btnPrimaryDisabled: {
     backgroundColor: COLORS.borderStrong,
   },
@@ -2452,16 +2710,16 @@ const styles = StyleSheet.create({
   btnSecondary: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     paddingHorizontal: 14,
     paddingVertical: 8,
     gap: 6,
   },
   btnSecondaryText: {
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     fontSize: 12,
     fontWeight: '600',
   },
@@ -2470,13 +2728,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    backgroundColor: COLORS.surface,
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.surfaceCard,
   },
   btnCancelText: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   btnDanger: {
     backgroundColor: '#DC2626',
@@ -2503,10 +2761,10 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 480,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 20,
     maxHeight: '90%',
   },
@@ -2518,12 +2776,14 @@ const styles = StyleSheet.create({
   },
   modalTitle: {
     fontSize: 16,
+    lineHeight: 22,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   modalSubtitle: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    lineHeight: 16.5,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   modalCloseBtn: {
@@ -2552,21 +2812,27 @@ const styles = StyleSheet.create({
   formLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 6,
   },
   requiredStar: {
     color: '#DC2626',
   },
   formInput: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 13,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   radioGrid: {
     flexDirection: 'row',
@@ -2576,24 +2842,24 @@ const styles = StyleSheet.create({
   radioItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 7,
     gap: 6,
   },
   radioItemActive: {
-    backgroundColor: COLORS.emeraldSubtle,
-    borderColor: COLORS.emeraldBorder,
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accentBorder,
   },
   radioDot: {
     width: 14,
     height: 14,
     borderRadius: 7,
     borderWidth: 1.5,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2608,11 +2874,11 @@ const styles = StyleSheet.create({
   },
   radioText: {
     fontSize: 11,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   radioTextActive: {
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   rolePickerRow: {
     flexDirection: 'row',
@@ -2622,25 +2888,25 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 8,
     gap: 6,
   },
   rolePickerCardActive: {
-    backgroundColor: COLORS.emeraldSubtle,
-    borderColor: COLORS.emeraldBorder,
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accentBorder,
   },
   rolePickerText: {
     fontSize: 11,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   rolePickerTextActive: {
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   statusPickerRow: {
     flexDirection: 'row',
@@ -2650,25 +2916,25 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 8,
   },
   statusPickerCardActive: {
-    backgroundColor: COLORS.emeraldSubtle,
-    borderColor: COLORS.emeraldBorder,
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accentBorder,
   },
   statusPickerText: {
     fontSize: 12,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   statusPickerTextActive: {
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   modalFooter: {
     flexDirection: 'row',
@@ -2676,7 +2942,7 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 16,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: colors.border,
     paddingTop: 12,
   },
 
@@ -2701,18 +2967,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 4,
+    paddingVertical: 6,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
+    flexWrap: 'wrap',
+    gap: 6,
   },
   detailLabel: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontWeight: '500',
   },
   detailValue: {
     fontSize: 12,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     fontWeight: '600',
   },
 
@@ -2732,7 +3000,7 @@ const styles = StyleSheet.create({
   },
   confirmText: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 19,
     marginVertical: 12,
   },
@@ -2758,9 +3026,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 12,
     marginTop: 10,
@@ -2769,11 +3037,11 @@ const styles = StyleSheet.create({
   deleteMemberName: {
     fontSize: 13,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   deleteMemberEmail: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   deleteDisclaimerBox: {

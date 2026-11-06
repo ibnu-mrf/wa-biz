@@ -30,13 +30,14 @@ test.describe('Feature: Autentikasi Pengguna WABiz (BDD Integration Tests)', () 
 
     // Then: Seluruh elemen branding, judul, tab, dan field formulir harus terlihat
     await test.step('Then seluruh elemen visual utama autentikasi harus ditampilkan', async () => {
+      await expect(page.getByText('WABiz').first()).toBeVisible();
       await expect(page.getByText('Selamat Datang Kembali')).toBeVisible();
       await expect(page.getByText('WhatsApp Business Management')).toBeVisible();
-      await expect(page.getByText('Masuk', { exact: true })).toBeVisible();
-      await expect(page.getByText('Daftar Baru', { exact: true })).toBeVisible();
+      await expect(page.getByRole('tab', { name: 'Masuk' })).toBeVisible();
+      await expect(page.getByRole('tab', { name: 'Daftar Baru' })).toBeVisible();
       await expect(page.getByPlaceholder('nama@organisasi.sch.id')).toBeVisible();
       await expect(page.getByPlaceholder('Minimal 6 karakter')).toBeVisible();
-      await expect(page.getByText('Masuk ke Workspace')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Masuk' })).toBeVisible();
     });
   });
 
@@ -48,9 +49,9 @@ test.describe('Feature: Autentikasi Pengguna WABiz (BDD Integration Tests)', () 
     });
 
     // When: Pengguna langsung mengklik tombol masuk tanpa memasukkan email
-    await test.step('When pengguna menekan tombol "Masuk ke Workspace" dengan email kosong', async () => {
+    await test.step('When pengguna menekan tombol "Masuk" dengan email kosong', async () => {
       await page.getByPlaceholder('nama@organisasi.sch.id').fill('');
-      await page.getByText('Masuk ke Workspace').click();
+      await page.getByRole('button', { name: 'Masuk' }).click();
     });
 
     // Then: Pesan validasi email wajib diisi ditampilkan
@@ -71,7 +72,7 @@ test.describe('Feature: Autentikasi Pengguna WABiz (BDD Integration Tests)', () 
     await test.step('When pengguna memasukkan email dengan format tidak valid', async () => {
       await page.getByPlaceholder('nama@organisasi.sch.id').fill('email-tanpa-domain');
       await page.getByPlaceholder('Minimal 6 karakter').fill('rahasia123');
-      await page.getByText('Masuk ke Workspace').click();
+      await page.getByRole('button', { name: 'Masuk' }).click();
     });
 
     // Then: Pesan validasi format email tidak valid ditampilkan
@@ -92,7 +93,7 @@ test.describe('Feature: Autentikasi Pengguna WABiz (BDD Integration Tests)', () 
     await test.step('When pengguna memasukkan email valid namun membiarkan kata sandi kosong', async () => {
       await page.getByPlaceholder('nama@organisasi.sch.id').fill('admin@organisasi.sch.id');
       await page.getByPlaceholder('Minimal 6 karakter').fill('');
-      await page.getByText('Masuk ke Workspace').click();
+      await page.getByRole('button', { name: 'Masuk' }).click();
     });
 
     // Then: Pesan validasi kata sandi wajib diisi ditampilkan
@@ -113,7 +114,7 @@ test.describe('Feature: Autentikasi Pengguna WABiz (BDD Integration Tests)', () 
     await test.step('When pengguna mengisi kata sandi hanya 5 karakter', async () => {
       await page.getByPlaceholder('nama@organisasi.sch.id').fill('admin@organisasi.sch.id');
       await page.getByPlaceholder('Minimal 6 karakter').fill('12345');
-      await page.getByText('Masuk ke Workspace').click();
+      await page.getByRole('button', { name: 'Masuk' }).click();
     });
 
     // Then: Pesan validasi kata sandi minimal 6 karakter ditampilkan
@@ -146,7 +147,7 @@ test.describe('Feature: Autentikasi Pengguna WABiz (BDD Integration Tests)', () 
     await test.step('When pengguna mengirimkan formulir login dengan kredensial tersebut', async () => {
       await page.getByPlaceholder('nama@organisasi.sch.id').fill('admin@organisasi.sch.id');
       await page.getByPlaceholder('Minimal 6 karakter').fill('wrongpassword123');
-      await page.getByText('Masuk ke Workspace').click();
+      await page.getByRole('button', { name: 'Masuk' }).click();
     });
 
     // Then: Pesan error terjemahan bahasa Indonesia ditampilkan di banner
@@ -165,7 +166,7 @@ test.describe('Feature: Autentikasi Pengguna WABiz (BDD Integration Tests)', () 
 
     // When: Pengguna mengklik tab "Daftar Baru"
     await test.step('When pengguna mengklik tab "Daftar Baru"', async () => {
-      await page.getByText('Daftar Baru', { exact: true }).click();
+      await page.getByRole('tab', { name: 'Daftar Baru' }).click();
     });
 
     // Then: UI bertransisi ke formulir pendaftaran akun baru
@@ -178,13 +179,13 @@ test.describe('Feature: Autentikasi Pengguna WABiz (BDD Integration Tests)', () 
 
     // When: Pengguna mengklik kembali tab "Masuk"
     await test.step('When pengguna mengklik tab "Masuk"', async () => {
-      await page.getByText('Masuk', { exact: true }).click();
+      await page.getByRole('tab', { name: 'Masuk' }).click();
     });
 
     // Then: UI kembali ke formulir login
     await test.step('Then formulir kembali ke tampilan masuk', async () => {
       await expect(page.getByText('Selamat Datang Kembali')).toBeVisible();
-      await expect(page.getByText('Masuk ke Workspace')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Masuk' })).toBeVisible();
     });
   });
 });

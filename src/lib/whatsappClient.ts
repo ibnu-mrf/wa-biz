@@ -33,6 +33,8 @@ export interface WhatsAppWorkerStatus {
   qrCount?: number;
   reconnectAttempts: number;
   lastError: string | null;
+  qrDataUrl?: string | null;
+  countdownSeconds?: number;
 }
 
 export interface WhatsAppQrResponse {
@@ -42,6 +44,7 @@ export interface WhatsAppQrResponse {
   qrDataUrl?: string;
   qrCount?: number;
   ageSeconds?: number;
+  countdownSeconds?: number;
   isFresh?: boolean;
   help?: string;
   message?: string;
@@ -58,15 +61,72 @@ export interface WhatsAppClientResult<T = any> {
 }
 
 /**
- * Mendapatkan URL basis dari Worker Staging lokal.
- * Default: http://127.0.0.1:4000
+ * Mendapatkan URL basis dari Worker Staging WhatsApp.
+ * Menghilangkan silent fallback 127.0.0.1 pada browser web non-localhost dan HTTPS
+ * agar request dari HP Android / web deployment tidak memanggil loopback lokal di perangkat klien.
  */
 export function getWorkerBaseUrl(): string {
   const envUrl = process.env.EXPO_PUBLIC_WHATSAPP_WORKER_URL;
-  if (envUrl && envUrl.trim().length > 0) {
-    return envUrl.trim().replace(/\/+$/, '');
+  if (!envUrl || envUrl.trim().length === 0) {
+    // Hanya izinkan fallback lokal jika secara eksplisit berjalan di browser dev server localhost HTTP
+    if (
+      typeof window !== 'undefined' &&
+      window.location &&
+      (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+      window.location.protocol === 'http:'
+    ) {
+      return 'http://127.0.0.1:4000';
+    }
+    return '';
   }
-  return 'http://127.0.0.1:4000';
+
+  const trimmed = envUrl.trim().replace(/\/+$/, '');
+
+  // Jika bundle dijalankan di browser web non-localhost atau HTTPS, URL loopback tidak valid
+  if (typeof window !== 'undefined' && window.location) {
+    const isHttps = window.location.protocol === 'https:';
+    const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const isLoopbackWorker = trimmed.includes('127.0.0.1') || trimmed.includes('localhost');
+
+    if ((isHttps || !isLocalHost) && isLoopbackWorker) {
+      // Hindari mixed-content atau koneksi ke loopback internal ponsel
+      return '';
+    }
+  }
+
+  return trimmed;
+}
+
+/**
+ * Memeriksa apakah backend worker telah terkonfigurasi dengan URL yang valid.
+ */
+export function isWorkerConfigured(): boolean {
+  return getWorkerBaseUrl().length > 0;
+}
+
+/**
+ * Format pesan error ramah pengguna saat request ke backend worker gagal.
+ */
+export function formatWorkerFetchError(err: any, baseUrlOrAction: string, optionalActionDesc?: string): string {
+  const isTwoArgs = optionalActionDesc === undefined;
+  const baseUrl = isTwoArgs ? (getWorkerBaseUrl() || 'http://127.0.0.1:4000') : baseUrlOrAction;
+  const actionDesc = isTwoArgs ? baseUrlOrAction : optionalActionDesc;
+
+  if (err?.name === 'AbortError') {
+    return `Koneksi timeout ke WhatsApp Gateway Worker (${baseUrl}).`;
+  }
+  const msg = String(err?.message || err);
+  const isFetchFailure =
+    err?.name === 'TypeError' ||
+    msg.includes('Failed to fetch') ||
+    msg.includes('NetworkError') ||
+    msg.includes('connection refused') ||
+    msg.includes('ECONNREFUSED');
+
+  if (isFetchFailure) {
+    return `Server worker gateway WhatsApp offline (${baseUrl}, port 4000). Pastikan proses worker aktif di terminal ('cd server && npm start' atau 'npm run worker') untuk ${actionDesc}.`;
+  }
+  return `Gagal ${actionDesc}: ${msg}`;
 }
 
 /**
@@ -111,6 +171,12 @@ export async function getWorkerAuthHeaders(includeContentType = true): Promise<R
  */
 export async function checkWorkerHealth(): Promise<{ ok: boolean; worker?: string; error?: string }> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      ok: false,
+      error: 'Worker WhatsApp belum dikonfigurasi (memerlukan URL publik atau server lokal yang aktif).',
+    };
+  }
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 4000);
@@ -143,6 +209,12 @@ export async function checkWorkerHealth(): Promise<{ ok: boolean; worker?: strin
  */
 export async function getWhatsAppStatus(): Promise<WhatsAppClientResult<WhatsAppWorkerStatus>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker WhatsApp belum dikonfigurasi.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -188,6 +260,13 @@ export async function getWhatsAppStatus(): Promise<WhatsAppClientResult<WhatsApp
  */
 export async function getWhatsAppQr(): Promise<WhatsAppQrResponse> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      status: 'error',
+      error: 'Worker WhatsApp belum dikonfigurasi.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -225,6 +304,12 @@ export async function getWhatsAppQr(): Promise<WhatsAppQrResponse> {
  */
 export async function reconnectWhatsApp(): Promise<WhatsAppClientResult> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker WhatsApp belum dikonfigurasi.',
+    };
+  }
 
   try {
     const headers = await getWorkerAuthHeaders(true);
@@ -246,30 +331,118 @@ export async function reconnectWhatsApp(): Promise<WhatsAppClientResult> {
   }
 }
 
+export type LinkedDeviceRevocationStatus =
+  | 'confirmed'
+  | 'unverified_socket_offline'
+  | 'unverified_timeout'
+  | 'unverified_error'
+  | 'skipped';
+
+export interface DisconnectResult {
+  success: boolean;
+  socketClosed: boolean;
+  localSessionDeleted: boolean;
+  deletedFilesCount: number;
+  revocationStatus: LinkedDeviceRevocationStatus;
+  message: string;
+}
+
 /**
- * Memutuskan sesi WhatsApp pada worker.
- * @param deleteSession jika true, hapus file auth state lokal di disk
+ * Memutuskan sesi WhatsApp pada worker dan menghapus kredensial autentikasi.
+ * @param deleteSession secara default true agar seluruh berkas kredensial sesi lokal dimusnahkan
  */
-export async function disconnectWhatsApp(deleteSession = false): Promise<WhatsAppClientResult> {
+export async function disconnectWhatsApp(deleteSession = true): Promise<WhatsAppClientResult<DisconnectResult>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker WhatsApp belum dikonfigurasi.',
+    };
+  }
 
   try {
     const headers = await getWorkerAuthHeaders(true);
-    const res = await fetch(`${baseUrl}/api/disconnect`, {
+    // Jika deleteSession = true, prioritaskan endpoint /api/logout
+    const endpoint = deleteSession ? `${baseUrl}/api/logout` : `${baseUrl}/api/disconnect`;
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify({ deleteSession }),
     });
 
     const json = await res.json();
+
+    // Sinkronisasi status di database Supabase klien jika sesi aktif
+    if (deleteSession) {
+      try {
+        const { data: sessionData } = await supabase.auth.getSession();
+        if (sessionData?.session) {
+          await supabase
+            .from('organization_whatsapp_configs')
+            .update({
+              is_active: false,
+              display_phone_number: null,
+              updated_at: new Date().toISOString(),
+            })
+            .match({ is_active: true });
+        }
+      } catch {
+        // Abaikan jika tabel belum ada atau sedang offline
+      }
+    }
+
     if (res.ok && json.success) {
-      return { success: true, message: json.message };
+      return { success: true, data: json.data, message: json.message };
     }
     return { success: false, error: json.error || `HTTP ${res.status}` };
   } catch (err: any) {
     return {
       success: false,
       error: `Gagal memutus sesi: ${(err as Error).message}`,
+    };
+  }
+}
+
+/**
+ * Logout permanen WhatsApp: menutup socket dan memusnahkan kredensial di server.
+ */
+export async function logoutWhatsApp(): Promise<WhatsAppClientResult<DisconnectResult>> {
+  return disconnectWhatsApp(true);
+}
+
+/**
+ * Memeriksa status keberadaan file kredensial sesi pada worker (Audit Keamanan Sesi).
+ */
+export async function auditSessionStorage(): Promise<WhatsAppClientResult<{
+  status: WhatsAppConnectionStatus;
+  phoneNumber: string | null;
+  hasSessionFiles: boolean;
+  sessionFileCount: number;
+  isClean: boolean;
+}>> {
+  const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker WhatsApp belum dikonfigurasi.',
+    };
+  }
+
+  try {
+    const headers = await getWorkerAuthHeaders(false);
+    const res = await fetch(`${baseUrl}/api/session/audit`, {
+      method: 'GET',
+      headers,
+    });
+    const json = await res.json();
+    if (res.ok && json.success) {
+      return { success: true, data: json.data };
+    }
+    return { success: false, error: json.error || `HTTP ${res.status}` };
+  } catch (err: any) {
+    return {
+      success: false,
+      error: `Gagal mengaudit folder sesi worker: ${(err as Error).message}`,
     };
   }
 }
@@ -282,6 +455,12 @@ export async function sendWhatsAppMessage(
   message: string
 ): Promise<WhatsAppClientResult<{ to: string; messageId?: string; sentAt?: string }>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Gateway pengiriman WhatsApp belum terhubung pada lingkungan ini.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -326,6 +505,12 @@ export async function retryRegistrationHandoffClient(
   organizationId?: string
 ): Promise<WhatsAppClientResult<any>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker gateway belum dikonfigurasi.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -373,6 +558,12 @@ export async function syncProfileToWorker(
   profile: OrgProfile
 ): Promise<WhatsAppClientResult> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker backend belum dikonfigurasi.',
+    };
+  }
 
   // Konversi OrgProfile ke format lengkap yang diterima worker (server/src/ai.ts).
   // SEMUA field dikirim secara eksplisit (termasuk string kosong) agar
@@ -479,6 +670,12 @@ export async function getCampaignGatewayStatus(
   organizationId?: string
 ): Promise<WhatsAppClientResult<CampaignGatewayStatus>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker gateway belum dikonfigurasi.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -558,6 +755,12 @@ export async function createPersistentCampaignClient(
   skippedRecipients: number;
 }>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Gateway antrean kampanye belum terhubung pada lingkungan ini.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -578,21 +781,24 @@ export async function createPersistentCampaignClient(
     }
     return { success: false, error: json.error || `HTTP ${res.status}` };
   } catch (err: any) {
-    if (err?.name === 'AbortError') {
-      return { success: false, error: 'Timeout pembuatan kampanye di worker (10s).' };
-    }
-    return { success: false, error: `Gagal terhubung ke worker WhatsApp: ${err?.message || err}` };
+    return { success: false, error: formatWorkerFetchError(err, baseUrl, 'membuat kampanye siaran') };
   }
 }
 
 /**
- * Membatalkan kampanye terjadwal di worker
+ * Membatalkan kampanye siaran (berjalan maupun terjadwal) di worker
  */
 export async function cancelCampaignClient(
   campaignId: string,
   organizationId?: string
-): Promise<WhatsAppClientResult<{ message: string }>> {
+): Promise<WhatsAppClientResult<{ message: string; cancelledCount?: number }>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker gateway belum dikonfigurasi.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -609,11 +815,15 @@ export async function cancelCampaignClient(
 
     const json = await res.json();
     if (res.ok && json.success) {
-      return { success: true, data: json.data, message: json.data?.message };
+      return {
+        success: true,
+        data: json.data,
+        message: json.message || json.data?.message || 'Siaran kampanye berhasil dibatalkan.',
+      };
     }
     return { success: false, error: json.error || `HTTP ${res.status}` };
   } catch (err: any) {
-    return { success: false, error: `Gagal membatalkan kampanye: ${err?.message || err}` };
+    return { success: false, error: formatWorkerFetchError(err, baseUrl, 'membatalkan siaran kampanye') };
   }
 }
 
@@ -636,6 +846,12 @@ export async function getCampaignRecipientsClient(
   };
 }>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker gateway belum dikonfigurasi.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -679,6 +895,12 @@ export async function getCampaignRecipientsClient(
  */
 export async function triggerCampaignQueueClient(): Promise<WhatsAppClientResult> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker gateway belum dikonfigurasi.',
+    };
+  }
 
   try {
     const headers = await getWorkerAuthHeaders(false);
@@ -701,6 +923,12 @@ export async function deleteConversationClient(
   organizationId?: string
 ): Promise<WhatsAppClientResult<{ message: string; deletedId?: string }>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker gateway belum dikonfigurasi.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -722,7 +950,7 @@ export async function deleteConversationClient(
     }
     return { success: false, error: json.error || `HTTP ${res.status}` };
   } catch (err: any) {
-    return { success: false, error: `Gagal menghapus percakapan: ${err?.message || err}` };
+    return { success: false, error: formatWorkerFetchError(err, baseUrl, 'menghapus percakapan') };
   }
 }
 
@@ -734,6 +962,12 @@ export async function deleteTeamMemberClient(
   organizationId?: string
 ): Promise<WhatsAppClientResult<{ message: string; deletedId?: string }>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker backend belum terhubung untuk operasi penghapusan anggota tim.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -755,7 +989,7 @@ export async function deleteTeamMemberClient(
     }
     return { success: false, error: json.error || `HTTP ${res.status}` };
   } catch (err: any) {
-    return { success: false, error: `Gagal menghapus anggota tim: ${err?.message || err}` };
+    return { success: false, error: formatWorkerFetchError(err, baseUrl, 'menghapus anggota tim') };
   }
 }
 
@@ -767,6 +1001,12 @@ export async function deleteCampaignClient(
   organizationId?: string
 ): Promise<WhatsAppClientResult<{ message: string }>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker gateway belum dikonfigurasi.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -788,7 +1028,7 @@ export async function deleteCampaignClient(
     }
     return { success: false, error: json.error || `HTTP ${res.status}` };
   } catch (err: any) {
-    return { success: false, error: `Gagal menghapus kampanye: ${err?.message || err}` };
+    return { success: false, error: formatWorkerFetchError(err, baseUrl, 'menghapus antrean kampanye') };
   }
 }
 
@@ -806,6 +1046,12 @@ export async function updateCampaignClient(
   }
 ): Promise<WhatsAppClientResult<any>> {
   const baseUrl = getWorkerBaseUrl();
+  if (!baseUrl) {
+    return {
+      success: false,
+      error: 'Worker gateway belum dikonfigurasi.',
+    };
+  }
 
   try {
     const controller = new AbortController();
@@ -826,7 +1072,7 @@ export async function updateCampaignClient(
     }
     return { success: false, error: json.error || `HTTP ${res.status}` };
   } catch (err: any) {
-    return { success: false, error: `Gagal memperbarui kampanye: ${err?.message || err}` };
+    return { success: false, error: formatWorkerFetchError(err, baseUrl, 'memperbarui kampanye') };
   }
 }
 

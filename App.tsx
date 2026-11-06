@@ -11,10 +11,12 @@ import {
   useWindowDimensions,
   ActivityIndicator,
   StatusBar as RNStatusBar,
+  Image,
+  Modal,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { Session, User } from '@supabase/supabase-js';
-import { supabase } from './src/lib/supabase';
+import { supabase, isSupabaseConfigured } from './src/lib/supabase';
 import { AuthView } from './src/components/AuthView';
 import { OnboardingView } from './src/components/OnboardingView';
 import {
@@ -41,30 +43,17 @@ import {
   DEFAULT_ORG_PROFILE,
   mapDbToOrgProfile,
 } from './src/components/SettingsView';
-
-// ==========================================
-// PALET WARNA B2B SAAS WABIZ
-// ==========================================
-const COLORS = {
-  forestDark: '#123C32',      // Deep forest green untuk sidebar & brand utama
-  forestHeader: '#0E3028',    // Sedikit lebih gelap untuk header sidebar
-  emerald: '#16A36A',         // Emerald untuk aksen primer & CTA utama
-  emeraldHover: '#0E7A4E',    // Emerald gelap untuk hover / pressed
-  emeraldSubtle: '#EAF6F0',   // Aksen lembut hijau untuk badge aktif
-  emeraldBorder: '#C1E6D3',   // Border halus untuk aksen hijau
-  neutralBg: '#F5F7F6',       // Latar canvas netral profesional
-  surface: '#FFFFFF',         // Kartu & panel putih bersih
-  surfaceMuted: '#FAFCFB',    // Latar kartu sekunder
-  border: '#E4EAE6',          // Border halus standar CRM
-  borderStrong: '#CDD7D1',    // Border lebih tegas untuk fokus / input
-  textDark: '#17231F',        // Teks gelap utama dengan kontras tinggi
-  textSecondary: '#718078',   // Teks abu-abu untuk deskripsi & label
-  textMuted: '#95A39C',       // Teks sangat redup untuk placeholder/sub-info
-  warningBg: '#FFFBEB',       // Amber lembut untuk status belum terhubung
-  warningBorder: '#FDE68A',   // Border amber
-  warningText: '#B45309',     // Teks amber
-  warningDot: '#F59E0B',      // Titik indikator amber
-};
+import { NotificationsModal } from './src/components/NotificationsModal';
+import {
+  NotificationCategory,
+  NotificationReferenceType,
+  fetchUnreadCount,
+  subscribeToNotifications,
+  addNotificationChangeListener,
+} from './src/lib/notifications';
+import { getWhatsAppStatus } from './src/lib/whatsappClient';
+import { getEffectiveContactLabels } from './src/lib/organizationTypes';
+import { COLORS, AppIcon, AppIconProps, BACKGROUNDS, SHADOWS, ThemeProvider, useTheme, ThemePalette } from './src/theme';
 
 // ==========================================
 // TIPE & NAVIGASI
@@ -94,394 +83,20 @@ const NAV_ITEMS: NavItem[] = [
   { key: 'settings', label: 'Pengaturan Organisasi' },
 ];
 
-// ==========================================
-// SISTEM IKON VEKTOR MANDIRI (MURNI REACT NATIVE)
-// Hindari emoji, gunakan bentuk geometris presisi standar SaaS
-// ==========================================
-interface AppIconProps {
-  name:
-  | 'dashboard'
-  | 'chat'
-  | 'users'
-  | 'campaign'
-  | 'bot'
-  | 'team'
-  | 'settings'
-  | 'search'
-  | 'bell'
-  | 'user'
-  | 'chevron-right'
-  | 'plus'
-  | 'check'
-  | 'alert'
-  | 'link'
-  | 'menu'
-  | 'close'
-  | 'log-out';
-  size?: number;
-  color?: string;
-}
-
-function AppIcon({ name, size = 18, color = COLORS.textSecondary }: AppIconProps) {
-  switch (name) {
-    case 'dashboard':
-      return (
-        <View style={{ width: size, height: size, justifyContent: 'space-between' }}>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', height: size * 0.44 }}>
-            <View style={{ width: size * 0.44, backgroundColor: color, borderRadius: 2 }} />
-            <View style={{ width: size * 0.44, backgroundColor: color, borderRadius: 2 }} />
-          </View>
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', height: size * 0.44 }}>
-            <View style={{ width: size * 0.44, backgroundColor: color, borderRadius: 2 }} />
-            <View style={{ width: size * 0.44, backgroundColor: color, borderRadius: 2 }} />
-          </View>
-        </View>
-      );
-
-    case 'chat':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View
-            style={{
-              width: size * 0.88,
-              height: size * 0.72,
-              borderRadius: size * 0.22,
-              borderWidth: 1.6,
-              borderColor: color,
-              justifyContent: 'center',
-              alignItems: 'center',
-            }}
-          >
-            <View style={{ flexDirection: 'row', gap: 2 }}>
-              <View style={{ width: 2, height: 2, borderRadius: 1, backgroundColor: color }} />
-              <View style={{ width: 2, height: 2, borderRadius: 1, backgroundColor: color }} />
-              <View style={{ width: 2, height: 2, borderRadius: 1, backgroundColor: color }} />
-            </View>
-          </View>
-          <View
-            style={{
-              position: 'absolute',
-              bottom: 1,
-              left: 3,
-              width: 4,
-              height: 4,
-              borderLeftWidth: 1.6,
-              borderBottomWidth: 1.6,
-              borderColor: color,
-              transform: [{ rotate: '45deg' }],
-            }}
-          />
-        </View>
-      );
-
-    case 'users':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View
-            style={{
-              width: size * 0.36,
-              height: size * 0.36,
-              borderRadius: (size * 0.36) / 2,
-              borderWidth: 1.6,
-              borderColor: color,
-              marginBottom: 1.5,
-            }}
-          />
-          <View
-            style={{
-              width: size * 0.74,
-              height: size * 0.36,
-              borderTopLeftRadius: size * 0.36,
-              borderTopRightRadius: size * 0.36,
-              borderWidth: 1.6,
-              borderColor: color,
-            }}
-          />
-        </View>
-      );
-
-    case 'campaign':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View
-            style={{
-              width: size * 0.7,
-              height: size * 0.52,
-              borderWidth: 1.6,
-              borderColor: color,
-              borderTopRightRadius: size * 0.26,
-              borderBottomRightRadius: size * 0.26,
-              borderLeftWidth: 3,
-            }}
-          />
-          <View
-            style={{
-              width: 2,
-              height: 4,
-              backgroundColor: color,
-              position: 'absolute',
-              bottom: 2,
-              left: 4,
-            }}
-          />
-        </View>
-      );
-
-    case 'bot':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View style={{ width: 1.6, height: 3, backgroundColor: color, marginBottom: 1 }} />
-          <View
-            style={{
-              width: size * 0.8,
-              height: size * 0.58,
-              borderRadius: 3,
-              borderWidth: 1.6,
-              borderColor: color,
-              flexDirection: 'row',
-              justifyContent: 'space-around',
-              alignItems: 'center',
-              paddingHorizontal: 2,
-            }}
-          >
-            <View style={{ width: 2.5, height: 2.5, borderRadius: 1.5, backgroundColor: color }} />
-            <View style={{ width: 2.5, height: 2.5, borderRadius: 1.5, backgroundColor: color }} />
-          </View>
-        </View>
-      );
-
-    case 'team':
-      return (
-        <View style={{ width: size, height: size, justifyContent: 'center', alignItems: 'center' }}>
-          <View style={{ position: 'absolute', left: 1, opacity: 0.55 }}>
-            <View style={{ width: 5, height: 5, borderRadius: 2.5, borderWidth: 1.2, borderColor: color }} />
-            <View style={{ width: 8, height: 4, borderTopLeftRadius: 4, borderTopRightRadius: 4, borderWidth: 1.2, borderColor: color }} />
-          </View>
-          <View style={{ position: 'absolute', right: 2 }}>
-            <View style={{ width: 7, height: 7, borderRadius: 3.5, borderWidth: 1.4, borderColor: color }} />
-            <View style={{ width: 11, height: 5, borderTopLeftRadius: 5, borderTopRightRadius: 5, borderWidth: 1.4, borderColor: color }} />
-          </View>
-        </View>
-      );
-
-    case 'settings':
-      return (
-        <View style={{ width: size, height: size, justifyContent: 'space-around', paddingVertical: 2 }}>
-          <View style={{ height: 1.6, backgroundColor: color, position: 'relative' }}>
-            <View style={{ position: 'absolute', left: 3, top: -2.2, width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
-          </View>
-          <View style={{ height: 1.6, backgroundColor: color, position: 'relative' }}>
-            <View style={{ position: 'absolute', right: 3, top: -2.2, width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
-          </View>
-          <View style={{ height: 1.6, backgroundColor: color, position: 'relative' }}>
-            <View style={{ position: 'absolute', left: 7, top: -2.2, width: 6, height: 6, borderRadius: 3, backgroundColor: color }} />
-          </View>
-        </View>
-      );
-
-    case 'search':
-      return (
-        <View style={{ width: size, height: size }}>
-          <View
-            style={{
-              width: size * 0.62,
-              height: size * 0.62,
-              borderRadius: (size * 0.62) / 2,
-              borderWidth: 1.6,
-              borderColor: color,
-              top: 1,
-              left: 1,
-            }}
-          />
-          <View
-            style={{
-              position: 'absolute',
-              bottom: 2,
-              right: 2,
-              width: 1.8,
-              height: size * 0.36,
-              backgroundColor: color,
-              transform: [{ rotate: '-45deg' }],
-              borderRadius: 1,
-            }}
-          />
-        </View>
-      );
-
-    case 'bell':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View
-            style={{
-              width: size * 0.65,
-              height: size * 0.58,
-              borderTopLeftRadius: size * 0.32,
-              borderTopRightRadius: size * 0.32,
-              borderWidth: 1.6,
-              borderColor: color,
-              borderBottomWidth: 0,
-            }}
-          />
-          <View style={{ width: size * 0.84, height: 1.6, backgroundColor: color, borderRadius: 1 }} />
-          <View style={{ width: 3, height: 2, backgroundColor: color, borderBottomLeftRadius: 1.5, borderBottomRightRadius: 1.5, marginTop: 1 }} />
-        </View>
-      );
-
-    case 'user':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View
-            style={{
-              width: size * 0.44,
-              height: size * 0.44,
-              borderRadius: (size * 0.44) / 2,
-              borderWidth: 1.6,
-              borderColor: color,
-              marginBottom: 1,
-            }}
-          />
-          <View
-            style={{
-              width: size * 0.8,
-              height: size * 0.38,
-              borderTopLeftRadius: size * 0.4,
-              borderTopRightRadius: size * 0.4,
-              borderWidth: 1.6,
-              borderColor: color,
-            }}
-          />
-        </View>
-      );
-
-    case 'chevron-right':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View
-            style={{
-              width: size * 0.35,
-              height: size * 0.35,
-              borderTopWidth: 1.8,
-              borderRightWidth: 1.8,
-              borderColor: color,
-              transform: [{ rotate: '45deg' }],
-            }}
-          />
-        </View>
-      );
-
-    case 'plus':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View style={{ position: 'absolute', width: size * 0.75, height: 1.8, backgroundColor: color }} />
-          <View style={{ position: 'absolute', height: size * 0.75, width: 1.8, backgroundColor: color }} />
-        </View>
-      );
-
-    case 'check':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View
-            style={{
-              width: size * 0.35,
-              height: size * 0.65,
-              borderBottomWidth: 1.8,
-              borderRightWidth: 1.8,
-              borderColor: color,
-              transform: [{ rotate: '45deg' }],
-              marginTop: -2,
-            }}
-          />
-        </View>
-      );
-
-    case 'alert':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View
-            style={{
-              width: size * 0.85,
-              height: size * 0.85,
-              borderRadius: (size * 0.85) / 2,
-              borderWidth: 1.6,
-              borderColor: color,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <View style={{ width: 1.8, height: size * 0.35, backgroundColor: color, borderRadius: 1, marginBottom: 2 }} />
-            <View style={{ width: 2, height: 2, borderRadius: 1, backgroundColor: color }} />
-          </View>
-        </View>
-      );
-
-    case 'link':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View
-            style={{
-              width: size * 0.65,
-              height: size * 0.42,
-              borderRadius: size * 0.2,
-              borderWidth: 1.6,
-              borderColor: color,
-              transform: [{ rotate: '-45deg' }],
-            }}
-          />
-        </View>
-      );
-
-    case 'menu':
-      return (
-        <View style={{ width: size, height: size, justifyContent: 'space-around', paddingVertical: 2 }}>
-          <View style={{ height: 1.8, backgroundColor: color, borderRadius: 1 }} />
-          <View style={{ height: 1.8, backgroundColor: color, borderRadius: 1 }} />
-          <View style={{ height: 1.8, backgroundColor: color, borderRadius: 1 }} />
-        </View>
-      );
-
-    case 'close':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View style={{ position: 'absolute', width: size * 0.8, height: 1.8, backgroundColor: color, transform: [{ rotate: '45deg' }] }} />
-          <View style={{ position: 'absolute', width: size * 0.8, height: 1.8, backgroundColor: color, transform: [{ rotate: '-45deg' }] }} />
-        </View>
-      );
-
-    case 'log-out':
-      return (
-        <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-          <View
-            style={{
-              position: 'absolute',
-              left: 1,
-              width: size * 0.45,
-              height: size * 0.8,
-              borderWidth: 1.6,
-              borderColor: color,
-              borderRightWidth: 0,
-              borderRadius: 2,
-            }}
-          />
-          <View style={{ position: 'absolute', right: 2, width: size * 0.45, height: 1.6, backgroundColor: color }} />
-          <View
-            style={{
-              position: 'absolute',
-              right: 2,
-              width: size * 0.25,
-              height: size * 0.25,
-              borderTopWidth: 1.6,
-              borderRightWidth: 1.6,
-              borderColor: color,
-              transform: [{ rotate: '45deg' }],
-            }}
-          />
-        </View>
-      );
-
-    default:
-      return <View style={{ width: size, height: size }} />;
-  }
-}
+const DRAWER_GROUPS: { title: string; keys: NavKey[] }[] = [
+  {
+    title: 'MENU UTAMA',
+    keys: ['dashboard', 'chat', 'users', 'campaign'],
+  },
+  {
+    title: 'OTOMATISASI & TIM',
+    keys: ['bot', 'team'],
+  },
+  {
+    title: 'SISTEM & AKUN',
+    keys: ['settings'],
+  },
+];
 
 // ==========================================
 // KOMPONEN EMPTY STATE PROFESIONAL
@@ -506,13 +121,15 @@ function EmptyState({
   secondaryActionLabel,
   onSecondaryAction,
 }: EmptyStateProps) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
     <View style={styles.emptyStateContainer}>
-      <View style={styles.emptyStateIconCircle}>
-        <AppIcon name={iconName} size={24} color={COLORS.forestDark} />
+      <View style={[styles.emptyStateIconCircle, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+        <AppIcon name={iconName} size={24} color={colors.accent} />
       </View>
-      <Text style={styles.emptyStateTitle}>{title}</Text>
-      <Text style={styles.emptyStateDescription}>{description}</Text>
+      <Text style={[styles.emptyStateTitle, { color: colors.textPrimary }]}>{title}</Text>
+      <Text style={[styles.emptyStateDescription, { color: colors.textSecondary }]}>{description}</Text>
       {(primaryActionLabel || secondaryActionLabel) && (
         <View style={styles.emptyStateActions}>
           {primaryActionLabel && (
@@ -552,29 +169,44 @@ interface MetricCardProps {
   isDesktop: boolean;
   isLoading?: boolean;
   isError?: boolean;
+  accentColor?: string;
+  accentBg?: string;
 }
 
-function MetricCard({ label, value, subtext, badgeText, iconName, isDesktop, isLoading, isError }: MetricCardProps) {
+function MetricCard({
+  label,
+  value,
+  subtext,
+  badgeText,
+  iconName,
+  isDesktop,
+  isLoading,
+  isError,
+  accentColor = COLORS.emerald,
+  accentBg = COLORS.emeraldSubtle,
+}: MetricCardProps) {
+  const { isDark, colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
-    <View style={[styles.metricCard, { width: isDesktop ? '23.5%' : '48%' }, isError && { borderColor: '#FECACA' }]}>
+    <View style={[styles.metricCard, { width: isDesktop ? '23.5%' : '48%', backgroundColor: colors.surfaceCard, borderColor: colors.border }, isError && { borderColor: '#FECACA' }]}>
       <View style={styles.metricCardHeader}>
-        <Text style={styles.metricLabel}>{label}</Text>
-        <View style={[styles.metricIconBox, isError && { backgroundColor: '#FEE2E2' }]}>
-          <AppIcon name={iconName} size={15} color={isError ? '#DC2626' : COLORS.forestDark} />
+        <Text style={[styles.metricLabel, { color: colors.textSecondary }]}>{label}</Text>
+        <View style={[styles.metricIconBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+          <AppIcon name={iconName} size={15} color={isError ? '#DC2626' : colors.textSecondary} />
         </View>
       </View>
       {isLoading ? (
         <View style={{ height: 32, justifyContent: 'center', alignItems: 'flex-start', marginVertical: 4 }}>
-          <ActivityIndicator size="small" color={COLORS.forestDark} />
+          <ActivityIndicator size="small" color={colors.accent} />
         </View>
       ) : (
-        <Text style={[styles.metricValue, isError && { color: '#B91C1C' }]}>{value}</Text>
+        <Text style={[styles.metricValue, { color: colors.textPrimary }, isError && { color: '#B91C1C' }]}>{value}</Text>
       )}
       <View style={styles.metricFooter}>
-        <View style={[styles.metricBadge, isError && { backgroundColor: '#FEE2E2' }]}>
-          <Text style={[styles.metricBadgeText, isError && { color: '#B91C1C' }]}>{badgeText}</Text>
+        <View style={[styles.metricBadge, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }, isError && { backgroundColor: isDark ? 'rgba(239,68,68,0.15)' : '#FEE2E2', borderColor: '#FECACA' }]}>
+          <Text style={[styles.metricBadgeText, { color: isError ? '#B91C1C' : colors.textSecondary }]}>{badgeText}</Text>
         </View>
-        <Text style={[styles.metricSubtext, isError && { color: '#DC2626' }]} numberOfLines={1}>
+        <Text style={[styles.metricSubtext, { color: colors.textMuted }, isError && { color: '#DC2626' }]} numberOfLines={1}>
           {subtext}
         </Text>
       </View>
@@ -625,68 +257,74 @@ function DashboardView({
   gatewayPhone?: string;
   error?: string | null;
 }) {
+  const { isDark, colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
-    <View style={styles.pageContainer}>
+    <View style={[styles.pageContainer, { backgroundColor: colors.background }]}>
       {/* Kartu Status Koneksi WhatsApp Gateway */}
-      <View style={styles.gatewayCard}>
+      <View style={[styles.gatewayCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
         <View style={styles.gatewayHeaderRow}>
           <View style={styles.gatewayTitleGroup}>
             <View style={styles.gatewayIconBox}>
-              <AppIcon name="link" size={18} color={COLORS.forestDark} />
+              <AppIcon name="link" size={17} color={COLORS.emerald} />
             </View>
-            <View>
-              <Text style={styles.gatewayTitle}>Status WhatsApp Gateway</Text>
-              <Text style={styles.gatewaySubtitle}>
-                Integrasi Cloud API Resmi & Otomatisasi Pesan Bisnis
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={[styles.gatewayTitle, { color: colors.textPrimary }]}>Status WhatsApp Gateway</Text>
+              <Text style={[styles.gatewaySubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
+                Cloud API & Integrasi Pesan Otomatis
               </Text>
             </View>
           </View>
           {isGatewayConnected ? (
-            <View style={[styles.statusPillWarning, { backgroundColor: '#EAF6F0', borderColor: '#C1E6D3' }]}>
-              <View style={[styles.statusDotWarning, { backgroundColor: '#16A36A' }]} />
-              <Text style={[styles.statusPillTextWarning, { color: '#0E7A4E' }]}>Terhubung (Staging)</Text>
+            <View style={styles.statusPillActive}>
+              <View style={styles.statusDotActive} />
+              <Text style={styles.statusPillTextActive}>Terhubung</Text>
             </View>
           ) : (
             <View style={styles.statusPillWarning}>
               <View style={styles.statusDotWarning} />
-              <Text style={styles.statusPillTextWarning}>Belum Terhubung</Text>
+              <Text style={styles.statusPillTextWarning}>Belum Tertaut</Text>
             </View>
           )}
         </View>
 
-        <Text style={styles.gatewayDescription}>
+        <Text style={[styles.gatewayDescription, { color: colors.textSecondary }]} numberOfLines={!isDesktop ? 2 : undefined}>
           {isGatewayConnected
-            ? 'Gateway WhatsApp Staging aktif dan terhubung. Pesan pelanggan masuk langsung ke basis data Supabase dan dijawab otomatis oleh Chatbot AI.'
-            : 'Gateway WhatsApp Business belum ditautkan ke nomor organisasi Anda. Tautkan nomor resmi untuk mengaktifkan kotak masuk percakapan, sinkronisasi kontak real-time, dan pengiriman siaran pesan massal.'}
+            ? 'Gateway WhatsApp aktif dan terhubung. Pesan pelanggan masuk langsung ke basis data Supabase dan dijawab otomatis oleh Chatbot AI.'
+            : 'Tautkan nomor WhatsApp resmi organisasi Anda untuk mengaktifkan kotak masuk percakapan, sinkronisasi kontak real-time, dan pengiriman siaran massal.'}
         </Text>
 
-        <View style={styles.gatewayMetaStrip}>
-          <View style={styles.gatewayMetaItem}>
-            <Text style={styles.gatewayMetaLabel}>Nomor Tertaut</Text>
-            <Text style={styles.gatewayMetaVal}>{gatewayPhone || '— (Belum Ada)'}</Text>
+        <View style={[styles.gatewayMetaStrip, !isDesktop && styles.gatewayMetaStripMobile, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+          <View style={[styles.gatewayMetaItem, !isDesktop && styles.gatewayMetaItemMobile]}>
+            <Text style={[styles.gatewayMetaLabel, { color: colors.textSecondary }]}>Nomor Tertaut</Text>
+            <Text style={[styles.gatewayMetaVal, { color: colors.textPrimary }]} numberOfLines={1}>
+              {isGatewayConnected && gatewayPhone ? gatewayPhone : '— (Belum Tertaut)'}
+            </Text>
           </View>
-          <View style={styles.gatewayMetaDivider} />
-          <View style={styles.gatewayMetaItem}>
-            <Text style={styles.gatewayMetaLabel}>Server Gateway</Text>
-            <Text style={styles.gatewayMetaVal}>ID-Jakarta (Latency 18ms)</Text>
+          {isDesktop && <View style={[styles.gatewayMetaDivider, { backgroundColor: colors.border }]} />}
+          <View style={[styles.gatewayMetaItem, !isDesktop && styles.gatewayMetaItemMobile]}>
+            <Text style={[styles.gatewayMetaLabel, { color: colors.textSecondary }]}>Server Gateway</Text>
+            <Text style={[styles.gatewayMetaVal, { color: colors.textPrimary }]} numberOfLines={1}>
+              {isGatewayConnected ? 'ID-Jakarta (Aktif)' : 'Nonaktif'}
+            </Text>
           </View>
-          <View style={styles.gatewayMetaDivider} />
-          <View style={styles.gatewayMetaItem}>
-            <Text style={styles.gatewayMetaLabel}>Pesan Masuk</Text>
-            <Text style={styles.gatewayMetaVal}>{isLoading ? '—' : error ? '— (Error)' : `${messagesCount} Pesan`}</Text>
+          {isDesktop && <View style={[styles.gatewayMetaDivider, { backgroundColor: colors.border }]} />}
+          <View style={[styles.gatewayMetaItem, !isDesktop && styles.gatewayMetaItemMobile]}>
+            <Text style={[styles.gatewayMetaLabel, { color: colors.textSecondary }]}>Pesan Masuk</Text>
+            <Text style={[styles.gatewayMetaVal, { color: colors.textPrimary }]} numberOfLines={1}>{isLoading ? '—' : error ? '— (Error)' : `${messagesCount} Pesan`}</Text>
           </View>
         </View>
 
-        <View style={styles.gatewayActionRow}>
+        <View style={[styles.gatewayActionRow, !isDesktop && styles.gatewayActionRowMobile]}>
           <TouchableOpacity
-            style={styles.btnPrimary}
+            style={[styles.btnPrimary, !isDesktop && styles.gatewayBtnMobilePrimary]}
             activeOpacity={0.8}
             onPress={() => onNavigate('settings', 'gateway')}
           >
-            <Text style={styles.btnPrimaryText}>{isGatewayConnected ? 'Kelola Gateway' : 'Tautkan Nomor WhatsApp'}</Text>
+            <Text style={styles.btnPrimaryText}>{isGatewayConnected ? 'Kelola Gateway' : 'Tautkan WhatsApp'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.btnSecondary}
+            style={[styles.btnSecondary, !isDesktop && styles.gatewayBtnMobileSecondary]}
             activeOpacity={0.8}
             onPress={() => onNavigate('chat')}
           >
@@ -695,142 +333,144 @@ function DashboardView({
         </View>
       </View>
 
-      {/* Ringkasan Metrik Kinerja */}
-      <View style={styles.sectionTitleRow}>
-        <Text style={styles.sectionTitle}>Ringkasan Metrik Bisnis</Text>
-        <Text style={styles.sectionSubtitleNote}>Periode 30 Hari Terakhir</Text>
-      </View>
-
-      {error && (
-        <View style={{
-          backgroundColor: '#FEF2F2',
-          borderColor: '#FECACA',
-          borderWidth: 1,
-          borderRadius: 8,
-          padding: 12,
-          marginBottom: 16,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 8,
-        }}>
-          <AppIcon name="alert" size={16} color="#DC2626" />
-          <Text style={{ fontSize: 13, color: '#B91C1C', flex: 1 }}>
-            Kendala sinkronisasi metrik bisnis: {error}
-          </Text>
+      {/* Ringkasan Metrik Kinerja dengan Ambient Glow Lembut */}
+      <View style={styles.metricsAmbientSection}>
+        <View style={styles.sectionTitleRow}>
+          <Text style={[styles.sectionTitle, { color: colors.textPrimary }]}>Ringkasan Metrik Bisnis</Text>
+          <Text style={[styles.sectionSubtitleNote, { color: colors.textSecondary }]}>Periode 30 Hari Terakhir</Text>
         </View>
-      )}
 
-      <View style={styles.metricsGrid}>
-        <MetricCard
-          label="Total Kontak"
-          value={isLoading ? "—" : error ? "—" : String(contactsCount)}
-          subtext={
-            isLoading
-              ? "Menyinkronkan data kontak..."
-              : error
-                ? "Gagal menyinkronkan data kontak"
-                : contactsCount > 0
-                ? `${contactsCount} kontak terdata`
-                : "Belum ada data kontak"
-          }
-          badgeText={isLoading ? "Memuat..." : error ? "Error" : contactsCount > 0 ? "Tersinkron" : "0 baru"}
-          iconName="users"
-          isDesktop={isDesktop}
-          isLoading={isLoading}
-          isError={Boolean(error)}
-        />
-        <MetricCard
-          label="Pesan Masuk"
-          value={isLoading ? "—" : error ? "—" : String(messagesCount)}
-          subtext={
-            isLoading
-              ? "Menyinkronkan pesan pelanggan..."
-              : error
-                ? "Gagal menyinkronkan data pesan"
-                : messagesCount > 0
-                ? `${messagesCount} pesan dari pelanggan`
-                : "0 pesan dari pelanggan"
-          }
-          badgeText={isLoading ? "Memuat..." : error ? "Error" : messagesCount > 0 ? "Pelanggan" : "0 baru"}
-          iconName="chat"
-          isDesktop={isDesktop}
-          isLoading={isLoading}
-          isError={Boolean(error)}
-        />
-        <MetricCard
-          label="Kampanye Aktif"
-          value={isLoading ? "—" : error ? "—" : String(campaignStats ? campaignStats.active : campaignsCount)}
-          subtext={
-            isLoading
-              ? "Menyinkronkan status kampanye..."
-              : error
-                ? "Gagal menyinkronkan status kampanye"
-                : campaignStats && campaignStats.total > 0
-                ? campaignStats.running > 0 && campaignStats.scheduled > 0
-                  ? `${campaignStats.running} berjalan, ${campaignStats.scheduled} terjadwal (total ${campaignStats.total} siaran)`
-                  : campaignStats.running > 0
-                    ? `${campaignStats.running} siaran berjalan (total ${campaignStats.total} siaran)`
-                    : campaignStats.scheduled > 0
-                      ? `${campaignStats.scheduled} siaran terjadwal (total ${campaignStats.total} siaran)`
-                      : `0 siaran aktif (${campaignStats.draft} draf, ${campaignStats.completed} selesai)`
-                : campaignsCount > 0
-                  ? `${campaignsCount} siaran aktif`
-                  : "Belum ada kampanye siaran dibuat"
-          }
-          badgeText={
-            isLoading
-              ? "Memuat..."
-              : error
-                ? "Error"
-                : campaignStats && campaignStats.running > 0
-                ? "Berjalan"
-                : campaignStats && campaignStats.scheduled > 0
-                  ? "Terjadwal"
-                  : campaignStats && campaignStats.total > 0
-                    ? `${campaignStats.total} Total`
-                    : "0 baru"
-          }
-          iconName="campaign"
-          isDesktop={isDesktop}
-          isLoading={isLoading}
-          isError={Boolean(error)}
-        />
-        <MetricCard
-          label="Percakapan Terbuka"
-          value={isLoading ? "—" : error ? "—" : String(conversationsCount)}
-          subtext={
-            isLoading
-              ? "Menyinkronkan status percakapan..."
-              : error
-                ? "Gagal menyinkronkan status percakapan"
-                : conversationsCount > 0
-                ? `${conversationsCount} percakapan terbuka`
-                : "Semua percakapan selesai"
-          }
-          badgeText={isLoading ? "Memuat..." : error ? "Error" : conversationsCount > 0 ? "Terbuka" : "Standby"}
-          iconName="bot"
-          isDesktop={isDesktop}
-          isLoading={isLoading}
-          isError={Boolean(error)}
-        />
+        {error && (
+          <View style={{
+            backgroundColor: '#FEF2F2',
+            borderColor: '#FECACA',
+            borderWidth: 1,
+            borderRadius: 8,
+            padding: 12,
+            marginBottom: 16,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <AppIcon name="alert" size={16} color="#DC2626" />
+            <Text style={{ fontSize: 13, color: '#B91C1C', flex: 1 }}>
+              Kendala sinkronisasi metrik bisnis: {error}
+            </Text>
+          </View>
+        )}
+
+        <View style={styles.metricsGrid}>
+          <MetricCard
+            label="Total Kontak"
+            value={isLoading ? "—" : error ? "—" : String(contactsCount)}
+            subtext={
+              isLoading
+                ? "Menyinkronkan..."
+                : error
+                  ? "Gagal sinkron"
+                  : contactsCount > 0
+                    ? `${contactsCount} kontak`
+                    : "0 kontak"
+            }
+            badgeText={isLoading ? "Memuat..." : error ? "Error" : contactsCount > 0 ? "Tersinkron" : "0 baru"}
+            iconName="users"
+            isDesktop={isDesktop}
+            isLoading={isLoading}
+            isError={Boolean(error)}
+            accentColor="#0D9488"
+            accentBg="#F0FDFA"
+          />
+          <MetricCard
+            label="Pesan Masuk"
+            value={isLoading ? "—" : error ? "—" : String(messagesCount)}
+            subtext={
+              isLoading
+                ? "Menyinkronkan..."
+                : error
+                  ? "Gagal sinkron"
+                  : messagesCount > 0
+                    ? `${messagesCount} pesan`
+                    : "0 pesan"
+            }
+            badgeText={isLoading ? "Memuat..." : error ? "Error" : messagesCount > 0 ? "Pelanggan" : "0 baru"}
+            iconName="chat"
+            isDesktop={isDesktop}
+            isLoading={isLoading}
+            isError={Boolean(error)}
+            accentColor="#0284C7"
+            accentBg="#F0F9FF"
+          />
+          <MetricCard
+            label="Kampanye Aktif"
+            value={isLoading ? "—" : error ? "—" : String(campaignStats ? campaignStats.active : campaignsCount)}
+            subtext={
+              isLoading
+                ? "Menyinkronkan..."
+                : error
+                  ? "Gagal sinkron"
+                  : campaignStats && campaignStats.active > 0
+                    ? `${campaignStats.active} siaran`
+                    : "0 siaran"
+            }
+            badgeText={
+              isLoading
+                ? "Memuat..."
+                : error
+                  ? "Error"
+                  : campaignStats && campaignStats.running > 0
+                    ? "Berjalan"
+                    : campaignStats && campaignStats.scheduled > 0
+                      ? "Terjadwal"
+                      : campaignStats && campaignStats.total > 0
+                        ? `${campaignStats.total} Total`
+                        : "0 baru"
+            }
+            iconName="campaign"
+            isDesktop={isDesktop}
+            isLoading={isLoading}
+            isError={Boolean(error)}
+            accentColor="#D97706"
+            accentBg="#FFFBEB"
+          />
+          <MetricCard
+            label="Percakapan Terbuka"
+            value={isLoading ? "—" : error ? "—" : String(conversationsCount)}
+            subtext={
+              isLoading
+                ? "Menyinkronkan..."
+                : error
+                  ? "Gagal sinkron"
+                  : conversationsCount > 0
+                    ? `${conversationsCount} aktif`
+                    : "Semua selesai"
+            }
+            badgeText={isLoading ? "Memuat..." : error ? "Error" : conversationsCount > 0 ? "Terbuka" : "Standby"}
+            iconName="bot"
+            isDesktop={isDesktop}
+            isLoading={isLoading}
+            isError={Boolean(error)}
+            accentColor="#7C3AED"
+            accentBg="#F5F3FF"
+          />
+        </View>
       </View>
 
       {/* Ringkasan Kampanye Eksekutif */}
-      <View style={styles.panelCard}>
-        <View style={styles.panelCardHeader}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <View style={styles.campaignHeaderIcon}>
-              <AppIcon name="campaign" size={16} color={COLORS.forestDark} />
+      <View style={[styles.panelCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
+        <View style={[styles.panelCardHeader, !isDesktop && styles.panelCardHeaderMobile]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1, minWidth: 200 }}>
+            <View style={[styles.campaignHeaderIcon, { backgroundColor: isDark ? 'rgba(66, 191, 176, 0.15)' : '#EAF6F0' }]}>
+              <AppIcon name="campaign" size={16} color={isDark ? colors.accent : COLORS.forestDark} />
             </View>
-            <View>
-              <Text style={styles.panelCardTitle}>Ringkasan Kampanye Eksekutif</Text>
-              <Text style={styles.panelCardSubtitle}>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text style={[styles.panelCardTitle, { color: colors.textPrimary }]}>Ringkasan Kampanye Eksekutif</Text>
+              <Text style={[styles.panelCardSubtitle, { color: colors.textSecondary }]} numberOfLines={1}>
                 Status Siaran WhatsApp Massal & Kampanye Terjadwal
               </Text>
             </View>
           </View>
           <TouchableOpacity
-            style={styles.btnSecondary}
+            style={[styles.btnSecondary, !isDesktop && { alignSelf: 'flex-start' }]}
             activeOpacity={0.8}
             onPress={() => onNavigate('campaign')}
           >
@@ -840,15 +480,15 @@ function DashboardView({
 
         {isLoading ? (
           <View style={{ padding: 24, alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-            <ActivityIndicator size="small" color={COLORS.forestDark} />
-            <Text style={{ fontSize: 13, color: COLORS.textSecondary }}>
+            <ActivityIndicator size="small" color={colors.accent} />
+            <Text style={{ fontSize: 13, color: colors.textSecondary }}>
               Menyinkronkan data kampanye organisasi...
             </Text>
           </View>
         ) : error ? (
           <View style={styles.campaignErrorCard}>
-            <AppIcon name="alert" size={18} color="#B91C1C" />
-            <Text style={{ fontSize: 13, color: '#B91C1C', flex: 1 }}>
+            <AppIcon name="alert" size={18} color={colors.dangerText} />
+            <Text style={{ fontSize: 13, color: colors.dangerText, flex: 1 }}>
               Gagal memuat status kampanye: {error}
             </Text>
           </View>
@@ -863,30 +503,30 @@ function DashboardView({
         ) : (
           <View style={{ gap: 14 }}>
             {/* KPI Strip */}
-            <View style={styles.campaignKpiStrip}>
-              <View style={styles.campaignKpiItem}>
+            <View style={[styles.campaignKpiStrip, !isDesktop && styles.campaignKpiStripMobile]}>
+              <View style={[styles.campaignKpiItem, !isDesktop && styles.campaignKpiItemMobile]}>
                 <Text style={styles.campaignKpiLabel}>Total Kampanye</Text>
                 <Text style={styles.campaignKpiVal}>{campaignStats?.total ?? campaigns.length}</Text>
               </View>
-              <View style={styles.campaignKpiDivider} />
-              <View style={styles.campaignKpiItem}>
+              {isDesktop && <View style={styles.campaignKpiDivider} />}
+              <View style={[styles.campaignKpiItem, !isDesktop && styles.campaignKpiItemMobile]}>
                 <Text style={styles.campaignKpiLabel}>Siaran Terjadwal</Text>
-                <Text style={[styles.campaignKpiVal, { color: '#1D4ED8' }]}>{campaignStats?.scheduled ?? 0}</Text>
+                <Text style={[styles.campaignKpiVal, { color: isDark ? '#60A5FA' : '#1D4ED8' }]}>{campaignStats?.scheduled ?? 0}</Text>
               </View>
-              <View style={styles.campaignKpiDivider} />
-              <View style={styles.campaignKpiItem}>
+              {isDesktop && <View style={styles.campaignKpiDivider} />}
+              <View style={[styles.campaignKpiItem, !isDesktop && styles.campaignKpiItemMobile]}>
                 <Text style={styles.campaignKpiLabel}>Sedang Berjalan</Text>
-                <Text style={[styles.campaignKpiVal, { color: '#B45309' }]}>{campaignStats?.running ?? 0}</Text>
+                <Text style={[styles.campaignKpiVal, { color: isDark ? '#F59E0B' : '#B45309' }]}>{campaignStats?.running ?? 0}</Text>
               </View>
-              <View style={styles.campaignKpiDivider} />
-              <View style={styles.campaignKpiItem}>
+              {isDesktop && <View style={styles.campaignKpiDivider} />}
+              <View style={[styles.campaignKpiItem, !isDesktop && styles.campaignKpiItemMobile]}>
                 <Text style={styles.campaignKpiLabel}>Selesai Dikirim</Text>
-                <Text style={[styles.campaignKpiVal, { color: '#047857' }]}>{campaignStats?.completed ?? 0}</Text>
+                <Text style={[styles.campaignKpiVal, { color: isDark ? '#34D399' : '#047857' }]}>{campaignStats?.completed ?? 0}</Text>
               </View>
-              <View style={styles.campaignKpiDivider} />
-              <View style={styles.campaignKpiItem}>
+              {isDesktop && <View style={styles.campaignKpiDivider} />}
+              <View style={[styles.campaignKpiItem, !isDesktop && styles.campaignKpiItemMobile]}>
                 <Text style={styles.campaignKpiLabel}>Draf Disimpan</Text>
-                <Text style={[styles.campaignKpiVal, { color: '#64748B' }]}>{campaignStats?.draft ?? 0}</Text>
+                <Text style={[styles.campaignKpiVal, { color: isDark ? colors.textMuted : '#64748B' }]}>{campaignStats?.draft ?? 0}</Text>
               </View>
             </View>
 
@@ -1077,7 +717,9 @@ function DashboardView({
 // ==========================================
 // KOMPONEN UTAMA APLIKASI
 // ==========================================
-export default function App() {
+function AppContent() {
+  const { isDark, colors, themeMode, setThemeMode, toggleTheme } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { width } = useWindowDimensions();
   const isDesktop = width >= 1024;
 
@@ -1094,6 +736,70 @@ export default function App() {
   const [activeNav, setActiveNav] = useState<NavKey>('dashboard');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [globalSearch, setGlobalSearch] = useState('');
+  const [isGlobalSearchFocused, setIsGlobalSearchFocused] = useState(false);
+
+  // Web CSS Injection: Hilangkan outline hitam browser secara universal dan terapkan focus ring WABiz Teal
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const styleId = 'wabiz-enterprise-inputs';
+      if (!document.getElementById(styleId)) {
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.textContent = `
+          html, body, #root, [data-testid="root"] {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+            text-rendering: optimizeLegibility;
+          }
+          *, *::before, *::after {
+            box-sizing: border-box;
+          }
+          input, textarea, select {
+            outline: none !important;
+            outline-style: none !important;
+            outline-width: 0 !important;
+            -webkit-tap-highlight-color: transparent !important;
+          }
+          input:focus, textarea:focus, select:focus {
+            outline: none !important;
+            outline-style: none !important;
+            outline-width: 0 !important;
+          }
+          input:not([data-embedded="true"]):focus,
+          textarea:focus {
+            border-color: #0D9488 !important;
+            box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15) !important;
+            transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out !important;
+          }
+          input[data-embedded="true"]:focus {
+            border-color: transparent !important;
+            box-shadow: none !important;
+          }
+          [data-input-container="true"]:focus-within,
+          .wabiz-input-container:focus-within {
+            border-color: #0D9488 !important;
+            box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15) !important;
+            transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out !important;
+          }
+        `;
+        document.head.appendChild(style);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      RNStatusBar.setBarStyle(isDark ? 'light-content' : 'dark-content');
+      if ('setBackgroundColor' in RNStatusBar && typeof (RNStatusBar as any).setBackgroundColor === 'function') {
+        (RNStatusBar as any).setBackgroundColor(isDark ? '#000000' : '#FFFFFF', true);
+      }
+    }
+  }, [isDark]);
+
+  // Notifikasi In-App State
+  const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState<number>(0);
 
   // Domain Model States (Organisasi Aktif)
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -1102,6 +808,16 @@ export default function App() {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [orgProfile, setOrgProfile] = useState<OrgProfile>(DEFAULT_ORG_PROFILE);
+  const effectiveContactLabels = useMemo(() => {
+    return getEffectiveContactLabels(orgProfile.customLabels, orgProfile.institutionType);
+  }, [orgProfile.customLabels, orgProfile.institutionType]);
+  const [liveGatewayStatus, setLiveGatewayStatus] = useState<{
+    isConnected: boolean;
+    phoneNumber: string | null;
+  }>({
+    isConnected: false,
+    phoneNumber: null,
+  });
   const [dashboardMetrics, setDashboardMetrics] = useState({
     contactsCount: 0,
     messagesCount: 0,
@@ -1136,6 +852,7 @@ export default function App() {
     setTeamMembers([]);
     setCampaigns([]);
     setOrgProfile(DEFAULT_ORG_PROFILE);
+    setLiveGatewayStatus({ isConnected: false, phoneNumber: null });
     setDashboardMetrics({
       contactsCount: 0,
       messagesCount: 0,
@@ -1157,7 +874,66 @@ export default function App() {
     });
     setActiveNav('dashboard');
     setGlobalSearch('');
+    setUnreadNotificationsCount(0);
+    setIsNotificationsOpen(false);
   }, []);
+
+  // Notifikasi In-App: Hitung badge & refresh real-time
+  const refreshUnreadNotifications = useCallback(async () => {
+    if (!currentOrg?.id || !user?.id) {
+      setUnreadNotificationsCount(0);
+      return;
+    }
+    const count = await fetchUnreadCount(currentOrg.id, user.id);
+    setUnreadNotificationsCount(count);
+  }, [currentOrg?.id, user?.id]);
+
+  useEffect(() => {
+    if (!currentOrg?.id || !user?.id) return;
+    refreshUnreadNotifications();
+    const unsubscribeRealtime = subscribeToNotifications(currentOrg.id, user.id, () => {
+      refreshUnreadNotifications();
+    });
+    const unsubscribeLocal = addNotificationChangeListener(() => {
+      refreshUnreadNotifications();
+    });
+    return () => {
+      unsubscribeRealtime();
+      unsubscribeLocal();
+    };
+  }, [currentOrg?.id, user?.id, refreshUnreadNotifications]);
+
+  const handleNotificationNavigate = useCallback(
+    (
+      category: NotificationCategory,
+      referenceId?: string | null
+    ) => {
+      switch (category) {
+        case 'chat':
+          setActiveNav('chat');
+          if (referenceId) {
+            setSelectedConversationId(referenceId);
+          }
+          break;
+        case 'contact':
+          setActiveNav('users');
+          break;
+        case 'campaign':
+          setActiveNav('campaign');
+          break;
+        case 'team':
+          setActiveNav('team');
+          break;
+        case 'system':
+          setActiveNav('settings');
+          break;
+        default:
+          break;
+      }
+      refreshUnreadNotifications();
+    },
+    [refreshUnreadNotifications]
+  );
 
   // Fetch metrik bisnis dashboard secara nyata dari Supabase
   const fetchDashboardMetrics = useCallback(async (orgId?: string) => {
@@ -1268,6 +1044,27 @@ export default function App() {
             time,
             status: row.status || 'open',
           };
+        });
+      }
+
+      // 6. Sinkronisasi status riil koneksi WhatsApp Gateway dari worker
+      try {
+        const waRes = await getWhatsAppStatus();
+        if (waRes.success && waRes.data && waRes.data.status === 'connected') {
+          setLiveGatewayStatus({
+            isConnected: true,
+            phoneNumber: waRes.data.phoneNumber || null,
+          });
+        } else {
+          setLiveGatewayStatus({
+            isConnected: false,
+            phoneNumber: null,
+          });
+        }
+      } catch {
+        setLiveGatewayStatus({
+          isConnected: false,
+          phoneNumber: null,
         });
       }
 
@@ -1492,19 +1289,30 @@ export default function App() {
 
   // Monitor status sesi Supabase Auth & status organisasi secara persisten
   useEffect(() => {
-    // 1. Ambil sesi awal dari storage
-    supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
-      setSession(initialSession);
-      const currentUser = initialSession?.user ?? null;
-      setUser(currentUser);
+    if (!isSupabaseConfigured()) {
       setIsAuthLoading(false);
-      previousUserIdRef.current = currentUser?.id ?? null;
-      if (currentUser) {
-        checkUserOrganization(currentUser.id);
-      } else {
-        resetWorkspaceState();
-      }
-    });
+      return;
+    }
+
+    // 1. Ambil sesi awal dari storage
+    supabase.auth
+      .getSession()
+      .then(({ data: { session: initialSession } }) => {
+        setSession(initialSession);
+        const currentUser = initialSession?.user ?? null;
+        setUser(currentUser);
+        setIsAuthLoading(false);
+        previousUserIdRef.current = currentUser?.id ?? null;
+        if (currentUser) {
+          checkUserOrganization(currentUser.id);
+        } else {
+          resetWorkspaceState();
+        }
+      })
+      .catch((err) => {
+        console.warn('Gagal memuat sesi Supabase awal:', err);
+        setIsAuthLoading(false);
+      });
 
     // 2. Berlangganan perubahan status auth secara real-time
     const {
@@ -1598,11 +1406,14 @@ export default function App() {
   if (isAuthLoading || (user && isOrgLoading && hasOrganization === null)) {
     return (
       <SafeAreaView style={[styles.appRoot, { justifyContent: 'center', alignItems: 'center' }]}>
-        <StatusBar style="light" />
+        <StatusBar style={isDark ? "light" : "dark"} />
         <View style={{ alignItems: 'center', gap: 14 }}>
-          <View style={styles.brandMonogram}>
-            <Text style={styles.brandMonogramText}>W</Text>
-          </View>
+          <Image
+            source={require('./assets/icon.png')}
+            style={{ width: 80, height: 80, borderRadius: 18 }}
+            resizeMode="contain"
+            accessibilityLabel="WABiz"
+          />
           <ActivityIndicator size="large" color={COLORS.emerald} />
           <Text style={{ color: '#9FB2A9', fontSize: 13, fontWeight: '500' }}>
             {isAuthLoading ? 'Memuat sesi WABiz...' : 'Memverifikasi organisasi workspace...'}
@@ -1615,8 +1426,8 @@ export default function App() {
   // 2. Tampilan Login / Register bila belum terautentikasi
   if (!session || !user) {
     return (
-      <SafeAreaView style={styles.appRoot}>
-        <StatusBar style="dark" />
+      <SafeAreaView style={[styles.appRoot, { backgroundColor: colors.background }]}>
+        <StatusBar style={isDark ? "light" : "dark"} />
         <AuthView />
       </SafeAreaView>
     );
@@ -1625,8 +1436,8 @@ export default function App() {
   // 3. Tampilan Onboarding Organisasi Pertama bila pengguna belum terhubung ke organisasi
   if (hasOrganization === false) {
     return (
-      <SafeAreaView style={styles.appRoot}>
-        <StatusBar style="dark" />
+      <SafeAreaView style={[styles.appRoot, { backgroundColor: colors.background }]}>
+        <StatusBar style={isDark ? "light" : "dark"} />
         <OnboardingView
           onOrganizationCreated={() => checkUserOrganization(user.id)}
           onLogout={handleLogout}
@@ -1662,28 +1473,31 @@ export default function App() {
   });
 
   return (
-    <SafeAreaView style={styles.appRoot}>
-      <StatusBar style="light" />
+    <SafeAreaView style={[styles.appRoot, { backgroundColor: colors.background }]}>
+      <StatusBar style={isDark ? "light" : "dark"} />
 
       {/* STRUKTUR UTAMA: SIDEBAR DESKTOP + MAIN AREA */}
-      <View style={styles.layoutWrapper}>
+      <View style={[styles.layoutWrapper, { backgroundColor: colors.background }]}>
         {/* SIDEBAR DESKTOP (Tampil pada layar >= 1024px) */}
         {isDesktop && (
-          <View style={styles.desktopSidebar}>
+          <View style={[styles.desktopSidebar, { backgroundColor: colors.sidebarBg, borderRightColor: colors.border }]}>
             {/* Logo WABiz Enterprise */}
             <View style={styles.sidebarHeader}>
               <View style={styles.brandBox}>
-                <View style={styles.brandMonogram}>
-                  <Text style={styles.brandMonogramText}>W</Text>
-                </View>
-                <View>
+                <Image
+                  source={require('./assets/icon.png')}
+                  style={styles.officialBrandLogoSidebar}
+                  resizeMode="contain"
+                  accessibilityLabel="WABiz"
+                />
+                <View style={{ flex: 1, minWidth: 0 }}>
                   <View style={styles.brandTitleRow}>
                     <Text style={styles.brandTitle}>WABiz</Text>
                     <View style={styles.brandTierBadge}>
-                      <Text style={styles.brandTierText}>ENTERPRISE</Text>
+                      <Text style={styles.brandTierText}>B2B SAAS</Text>
                     </View>
                   </View>
-                  <Text style={styles.brandWorkspace}>{currentOrg?.name || 'Workspace WABiz'}</Text>
+                  <Text style={styles.brandWorkspace} numberOfLines={1}>{currentOrg?.name || 'Workspace WABiz'}</Text>
                   {currentUserRole && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
                       <View
@@ -1720,6 +1534,7 @@ export default function App() {
                     style={[styles.sidebarNavItem, isActive && styles.sidebarNavItemActive]}
                     activeOpacity={0.7}
                     onPress={() => handleNavSelect(item.key)}
+                    accessibilityLabel={`Menu Navigasi ${item.label}`}
                   >
                     <View style={styles.sidebarNavIconWrapper}>
                       <AppIcon
@@ -1764,10 +1579,10 @@ export default function App() {
                   <Text style={styles.sidebarAvatarText}>{userInitials}</Text>
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.sidebarUserName} numberOfLines={1}>
+                  <Text style={styles.sidebarUserName} numberOfLines={2}>
                     {userFullName}
                   </Text>
-                  <Text style={styles.sidebarUserRole} numberOfLines={1}>
+                  <Text style={styles.sidebarUserRole} numberOfLines={1} ellipsizeMode="middle">
                     {user.email}
                   </Text>
                 </View>
@@ -1785,73 +1600,183 @@ export default function App() {
         )}
 
         {/* AREA KONTEN UTAMA */}
-        <View style={styles.mainContentArea}>
+        <View style={[styles.mainContentArea, { backgroundColor: colors.background }]}>
           {/* HEADER UTAMA */}
-          <View style={styles.topHeader}>
-            <View style={styles.topHeaderLeft}>
+          <View style={[styles.topHeader, !isDesktop && styles.topHeaderMobile, { backgroundColor: colors.headerBg, borderBottomColor: colors.border }]}>
+            <View style={[styles.topHeaderLeft, !isDesktop && styles.topHeaderLeftMobile]}>
               {/* Tombol Hamburger Menu Pada Mobile */}
               {!isDesktop && (
                 <TouchableOpacity
-                  style={styles.mobileMenuButton}
+                  style={[styles.mobileMenuButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
                   activeOpacity={0.7}
                   onPress={() => setIsMobileMenuOpen(true)}
                   accessibilityLabel="Buka Menu Navigasi"
+                  accessibilityRole="button"
                 >
-                  <AppIcon name="menu" size={20} color={COLORS.textDark} />
+                  <AppIcon name="menu" size={18} color={colors.textPrimary} />
                 </TouchableOpacity>
               )}
 
-              <View>
-                <Text style={styles.topHeaderTitle}>{pageMeta.title}</Text>
-                <Text style={styles.topHeaderSubtitle}>{pageMeta.subtitle}</Text>
+              <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
+                <Text
+                  style={[styles.topHeaderTitle, !isDesktop && styles.topHeaderTitleMobile, { color: colors.textPrimary }]}
+                  numberOfLines={1}
+                >
+                  {pageMeta.title}
+                </Text>
+                {isDesktop && (
+                  <Text
+                    style={[styles.topHeaderSubtitle, { color: colors.textSecondary }]}
+                    numberOfLines={1}
+                  >
+                    {pageMeta.subtitle}
+                  </Text>
+                )}
               </View>
             </View>
 
-            <View style={styles.topHeaderRight}>
+            <View style={[styles.topHeaderRight, !isDesktop && styles.topHeaderRightMobile]}>
               {/* Pencarian Cepat Pada Desktop */}
               {isDesktop && (
-                <View style={styles.topHeaderSearchBox}>
-                  <AppIcon name="search" size={15} color={COLORS.textSecondary} />
+                <View
+                  style={[
+                    styles.topHeaderSearchBox,
+                    { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                    isGlobalSearchFocused && styles.topHeaderSearchBoxFocused,
+                  ]}
+                  // @ts-ignore
+                  dataSet={{ inputContainer: 'true' }}
+                >
+                  <AppIcon
+                    name="search"
+                    size={15}
+                    color={isGlobalSearchFocused ? COLORS.teal : colors.textSecondary}
+                  />
                   <TextInput
-                    style={styles.topHeaderSearchInput}
+                    style={[styles.topHeaderSearchInput, { color: colors.textPrimary }]}
                     placeholder="Pencarian cepat (Ctrl+K)..."
-                    placeholderTextColor={COLORS.textMuted}
+                    placeholderTextColor={colors.textPlaceholder}
                     value={globalSearch}
                     onChangeText={setGlobalSearch}
+                    onFocus={() => setIsGlobalSearchFocused(true)}
+                    onBlur={() => setIsGlobalSearchFocused(false)}
+                    // @ts-ignore
+                    dataSet={{ embedded: 'true' }}
                   />
                 </View>
               )}
 
-              {/* Notifikasi Bell */}
+              {/* 1. Tombol Notifikasi Bell (dengan badge jumlah belum dibaca) */}
               <TouchableOpacity
-                style={styles.iconCircleButton}
+                style={[
+                  styles.iconCircleButton,
+                  !isDesktop && styles.iconCircleButtonMobile,
+                  { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                ]}
                 activeOpacity={0.7}
-                accessibilityLabel="Notifikasi"
+                onPress={() => setIsNotificationsOpen(true)}
+                accessibilityLabel={`Notifikasi, ${unreadNotificationsCount} belum dibaca`}
+                accessibilityRole="button"
               >
-                <AppIcon name="bell" size={17} color={COLORS.textDark} />
-                <View style={styles.bellNoticeDot} />
+                <AppIcon name="bell" size={!isDesktop ? 15 : 17} color={colors.textPrimary} />
+                {unreadNotificationsCount > 0 && (
+                  <View style={styles.bellBadgePill}>
+                    <Text style={styles.bellBadgeText}>
+                      {unreadNotificationsCount > 9 ? '9+' : unreadNotificationsCount}
+                    </Text>
+                  </View>
+                )}
               </TouchableOpacity>
 
-              {/* Avatar Ringkas */}
-              <View style={styles.topAvatar}>
-                <Text style={styles.topAvatarText}>{userInitials}</Text>
-              </View>
-
-              {/* Tombol Keluar Sesi */}
+              {/* 2. Tombol Toggle Light/Dark Mode (Sun / Moon) */}
               <TouchableOpacity
-                style={styles.iconCircleButton}
+                style={[
+                  styles.iconCircleButton,
+                  !isDesktop && styles.iconCircleButtonMobile,
+                  { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
+                ]}
                 activeOpacity={0.7}
-                onPress={handleLogout}
-                accessibilityLabel="Keluar dari akun"
+                onPress={toggleTheme}
+                accessibilityLabel={isDark ? "Beralih ke Mode Terang" : "Beralih ke Mode Gelap"}
+                accessibilityRole="button"
+                // @ts-ignore
+                title={isDark ? "Beralih ke Mode Terang" : "Beralih ke Mode Gelap"}
               >
-                <AppIcon name="log-out" size={15} color={COLORS.textDark} />
+                <AppIcon
+                  name={isDark ? "sun" : "moon"}
+                  size={!isDesktop ? 15 : 18}
+                  color={colors.textSecondary}
+                />
               </TouchableOpacity>
+
+              {/* 3. Identitas Akun Pengguna: Nama & Role OWNER */}
+              {isDesktop ? (
+                <View style={[styles.topProfilePill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                  <View style={[styles.topAvatar, { backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.2)' : COLORS.forestDark }]}>
+                    <Text style={[styles.topAvatarText, { color: colors.isDark ? colors.accent : '#FFFFFF' }]}>{userInitials}</Text>
+                  </View>
+                  <View style={styles.topProfileTextGroup}>
+                    <Text style={[styles.topProfileName, { color: colors.textPrimary }]} numberOfLines={1} ellipsizeMode="tail">
+                      {userFullName}
+                    </Text>
+                    <Text style={[styles.topProfileRole, { color: colors.isDark ? colors.accent : COLORS.emerald }]} numberOfLines={1}>
+                      {currentUserRole ? currentUserRole.toUpperCase() : 'USER'}
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                /* Mobile Profile Pill: Sederhana (Hanya Tombol Avatar Bulat Tanpa Teks Nama/Role) agar Judul Halaman Lega */
+                <TouchableOpacity
+                  style={[
+                    styles.topAvatarOnlyMobileBtn,
+                    {
+                      backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.2)' : COLORS.forestDark,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  activeOpacity={0.7}
+                  onPress={() => setIsMobileMenuOpen(true)}
+                  accessibilityLabel={`Profil ${userFullName}, peran ${currentUserRole || 'user'}, buka menu`}
+                  accessibilityRole="button"
+                >
+                  <Text
+                    style={[
+                      styles.topAvatarText,
+                      styles.topAvatarMobileText,
+                      { color: colors.isDark ? colors.accent : '#FFFFFF' },
+                    ]}
+                  >
+                    {userInitials}
+                  </Text>
+                  <View style={styles.topAvatarOnlineDot} />
+                </TouchableOpacity>
+              )}
+
+              {/* Tombol Keluar Sesi Pada Desktop */}
+              {isDesktop && (
+                <TouchableOpacity
+                  style={[styles.iconCircleButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+                  activeOpacity={0.7}
+                  onPress={handleLogout}
+                  accessibilityLabel="Keluar dari akun WABiz"
+                  accessibilityRole="button"
+                >
+                  <AppIcon name="log-out" size={17} color={colors.textSecondary} />
+                </TouchableOpacity>
+              )}
             </View>
           </View>
 
           {/* KONTEN HALAMAN */}
           {activeNav === 'chat' ? (
-            <View style={[styles.chatViewWrapper, !isDesktop && styles.chatViewWrapperMobile]}>
+            <View
+              style={[
+                styles.chatViewWrapper,
+                !isDesktop && styles.chatViewWrapperMobile,
+                !isDesktop && selectedConversationId !== null && styles.chatViewWrapperMobileDetail,
+                { backgroundColor: colors.background }
+              ]}
+            >
               <ConversationsView
                 organizationId={currentOrg?.id}
                 currentUserId={user?.id}
@@ -1869,7 +1794,7 @@ export default function App() {
             </View>
           ) : (
             <ScrollView
-              style={styles.scrollCanvas}
+              style={[styles.scrollCanvas, { backgroundColor: colors.background }]}
               contentContainerStyle={[
                 styles.scrollContentContainer,
                 !isDesktop && styles.scrollContentMobile,
@@ -1911,17 +1836,24 @@ export default function App() {
                   error={dashboardMetrics.error}
                   recentActivities={dashboardMetrics.recentActivities}
                   onSelectConversation={(id) => setSelectedConversationId(id)}
-                  isGatewayConnected={orgProfile.isGatewayConnected}
-                  gatewayPhone={orgProfile.escalationPhone}
+                  isGatewayConnected={liveGatewayStatus.isConnected}
+                  gatewayPhone={liveGatewayStatus.phoneNumber || undefined}
                 />
               )}
               {activeNav === 'users' && (
                 <ContactsView
                   organizationId={currentOrg?.id}
+                  currentUserId={user?.id}
                   contacts={contacts}
                   setContacts={setContacts}
                   isDesktop={isDesktop}
                   onNavigate={handleNavSelect}
+                  contactLabels={effectiveContactLabels}
+                  institutionType={orgProfile.institutionType}
+                  userRole={currentUserRole}
+                  onLabelsUpdated={(newLabels) => {
+                    setOrgProfile((prev) => ({ ...prev, customLabels: newLabels }));
+                  }}
                 />
               )}
               {activeNav === 'campaign' && (
@@ -1933,6 +1865,8 @@ export default function App() {
                   contacts={contacts}
                   isDesktop={isDesktop}
                   onNavigate={handleNavSelect}
+                  contactLabels={effectiveContactLabels}
+                  institutionType={orgProfile.institutionType}
                   onCampaignUpdated={() => {
                     if (currentOrg?.id) {
                       fetchDashboardMetrics(currentOrg.id);
@@ -1954,6 +1888,7 @@ export default function App() {
                 <TeamView
                   organizationId={currentOrg?.id}
                   currentUserId={user?.id}
+                  currentUserRole={currentUserRole}
                   teamMembers={teamMembers}
                   setTeamMembers={setTeamMembers}
                   isDesktop={isDesktop}
@@ -1975,7 +1910,7 @@ export default function App() {
           )}
 
           {/* NAVIGASI BAWAH UNTUK PERANGKAT MOBILE */}
-          {!isDesktop && (
+          {!isDesktop && !(activeNav === 'chat' && selectedConversationId !== null) && (
             <View style={styles.mobileBottomNav}>
               {dynamicNavItems.slice(0, 4).map((item) => {
                 const isActive = activeNav === item.key;
@@ -1990,13 +1925,14 @@ export default function App() {
                       <AppIcon
                         name={item.key as AppIconProps['name']}
                         size={18}
-                        color={isActive ? COLORS.emerald : COLORS.textSecondary}
+                        color={isActive ? colors.accent : colors.textSecondary}
                       />
                     </View>
                     <Text
                       style={[
                         styles.mobileBottomNavLabel,
-                        isActive && styles.mobileBottomNavLabelActive,
+                        { color: colors.textSecondary },
+                        isActive && [styles.mobileBottomNavLabelActive, { color: colors.accent }],
                       ]}
                     >
                       {item.label}
@@ -2023,16 +1959,17 @@ export default function App() {
                     size={18}
                     color={
                       activeNav === 'bot' || activeNav === 'team' || activeNav === 'settings'
-                        ? COLORS.emerald
-                        : COLORS.textSecondary
+                        ? colors.accent
+                        : colors.textSecondary
                     }
                   />
                 </View>
                 <Text
                   style={[
                     styles.mobileBottomNavLabel,
+                    { color: colors.textSecondary },
                     (activeNav === 'bot' || activeNav === 'team' || activeNav === 'settings') &&
-                    styles.mobileBottomNavLabelActive,
+                    [styles.mobileBottomNavLabelActive, { color: colors.accent }],
                   ]}
                 >
                   Lainnya
@@ -2043,93 +1980,212 @@ export default function App() {
         </View>
       </View>
 
-      {/* DRAWER SLIDEOVER PADA MOBILE */}
-      {!isDesktop && isMobileMenuOpen && (
-        <View style={styles.mobileDrawerOverlay}>
-          <TouchableOpacity
-            style={styles.mobileDrawerBackdrop}
-            activeOpacity={1}
-            onPress={() => setIsMobileMenuOpen(false)}
-          />
-          <View style={styles.mobileDrawerContent}>
-            {/* Header Drawer Mobile */}
+      {/* DRAWER SLIDEOVER PADA MOBILE (NAVY SAAS DENGAN HEADER HOLOGRAFIK) */}
+      {!isDesktop && (
+        <Modal
+          visible={isMobileMenuOpen}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setIsMobileMenuOpen(false)}
+        >
+          <View style={styles.mobileDrawerOverlay}>
+            <TouchableOpacity
+              style={styles.mobileDrawerBackdrop}
+              activeOpacity={1}
+              onPress={() => setIsMobileMenuOpen(false)}
+              accessibilityLabel="Tutup Navigasi Luar"
+            />
+            <View style={styles.mobileDrawerContent}>
+            {/* 1. Header Identitas WABiz dengan Latar Holografik Biru-Teal */}
             <View style={styles.mobileDrawerHeader}>
-              <View style={styles.brandBox}>
-                <View style={styles.brandMonogram}>
-                  <Text style={styles.brandMonogramText}>W</Text>
+              {/* Pancaran Cahaya Ambient Holografik */}
+              <View style={styles.drawerHoloGlowCyan} />
+              <View style={styles.drawerHoloGlowTeal} />
+
+              {/* Gelombang Digital Melengkung */}
+              <View style={styles.drawerHoloWaveRing1} />
+              <View style={styles.drawerHoloWaveRing2} />
+
+              {/* Partikel Bercahaya */}
+              <View style={styles.drawerHoloParticle1} />
+              <View style={styles.drawerHoloParticle2} />
+              <View style={styles.drawerHoloParticle3} />
+
+              {/* Konten Identitas: Logo Resmi, Brand, Org, Badge, dan Tombol Close */}
+              <View style={styles.drawerBrandRow}>
+                {/* Kotak Rounded dengan Latar Holografik & Logo Resmi */}
+                <View style={styles.drawerLogoBadgeContainer}>
+                  <Image
+                    source={require('./assets/icon.png')}
+                    style={styles.officialBrandLogoDrawer}
+                    resizeMode="contain"
+                    accessibilityLabel="WABiz"
+                  />
                 </View>
-                <View>
-                  <Text style={styles.brandTitle}>WABiz</Text>
-                  <Text style={styles.brandWorkspace}>
-                    {currentOrg?.name || 'WhatsApp Enterprise'}
-                  </Text>
+
+                {/* Brand WABiz, Badge B2B SAAS, Nama Organisasi, & Badge OWNER */}
+                <View style={styles.drawerBrandInfo}>
+                  <View style={styles.drawerBrandTitleRow}>
+                    <Text style={styles.drawerBrandTitle}>WABiz</Text>
+                    <View style={styles.drawerBrandTierBadge}>
+                      <Text style={styles.drawerBrandTierText}>B2B SAAS</Text>
+                    </View>
+                  </View>
+                  <View style={styles.drawerOrgRow}>
+                    <Text style={styles.drawerBrandWorkspace} numberOfLines={1} ellipsizeMode="tail">
+                      {currentOrg?.name || 'Workspace WABiz'}
+                    </Text>
+                    <View style={styles.drawerRoleBadge}>
+                      <Text style={styles.drawerRoleBadgeText}>
+                        {currentUserRole ? currentUserRole.toUpperCase() : 'OWNER'}
+                      </Text>
+                    </View>
+                  </View>
                 </View>
+
+                {/* Tombol Tutup Navigasi */}
+                <TouchableOpacity
+                  style={styles.drawerCloseBtn}
+                  activeOpacity={0.7}
+                  onPress={() => setIsMobileMenuOpen(false)}
+                  accessibilityLabel="Tutup Menu Navigasi"
+                >
+                  <AppIcon name="close" size={14} color="#CBD5E1" />
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity
-                style={styles.drawerCloseBtn}
-                activeOpacity={0.7}
-                onPress={() => setIsMobileMenuOpen(false)}
-              >
-                <AppIcon name="close" size={18} color="#FFFFFF" />
-              </TouchableOpacity>
             </View>
 
-            {/* List Navigasi Drawer */}
-            <ScrollView style={styles.mobileDrawerNavList}>
-              <Text style={styles.sidebarSectionHeading}>NAVIGASI WORKSPACE</Text>
+            {/* 2. Menu Navigasi (Urutan Lengkap & Konsisten) */}
+            <ScrollView
+              style={styles.mobileDrawerNavList}
+              contentContainerStyle={styles.mobileDrawerNavScrollContent}
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+            >
+              <Text style={styles.drawerSectionHeading}>MENU UTAMA</Text>
               {dynamicNavItems.map((item) => {
                 const isActive = activeNav === item.key;
                 return (
                   <TouchableOpacity
                     key={item.key}
-                    style={[styles.sidebarNavItem, isActive && styles.sidebarNavItemActive]}
+                    style={[
+                      styles.drawerNavItem,
+                      isActive && styles.drawerNavItemActive,
+                    ]}
                     activeOpacity={0.7}
-                    onPress={() => handleNavSelect(item.key)}
+                    onPress={() => {
+                      handleNavSelect(item.key);
+                      setIsMobileMenuOpen(false);
+                    }}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Menu Navigasi ${item.label}`}
                   >
-                    <View style={styles.sidebarNavIconWrapper}>
+                    <View style={styles.drawerNavIconWrapper}>
                       <AppIcon
                         name={item.key as AppIconProps['name']}
-                        size={18}
-                        color={isActive ? COLORS.emerald : '#9FB2A9'}
+                        size={17}
+                        color={isActive ? '#2DD4BF' : '#94A3B8'}
                       />
                     </View>
                     <Text
-                      style={[styles.sidebarNavLabel, isActive && styles.sidebarNavLabelActive]}
+                      style={[
+                        styles.drawerNavLabel,
+                        isActive && styles.drawerNavLabelActive,
+                      ]}
                     >
                       {item.label}
                     </Text>
+                    {item.badge && (
+                      <View style={styles.drawerItemBadge}>
+                        <Text style={styles.drawerItemBadgeText}>{item.badge}</Text>
+                      </View>
+                    )}
                   </TouchableOpacity>
                 );
               })}
             </ScrollView>
 
-            {/* Profil Drawer */}
-            <View style={styles.sidebarFooter}>
-              <View style={styles.sidebarUserProfile}>
-                <View style={styles.sidebarAvatarCircle}>
-                  <Text style={styles.sidebarAvatarText}>{userInitials}</Text>
+            {/* 3. Bagian Bawah Sidebar: Status Gateway WhatsApp & Profil Pengguna */}
+            <View style={styles.drawerFooter}>
+              {/* Status WhatsApp Gateway */}
+              <TouchableOpacity
+                style={styles.drawerGatewayStatusBox}
+                activeOpacity={0.7}
+                onPress={() => {
+                  setIsMobileMenuOpen(false);
+                  handleNavSelect('settings', 'gateway');
+                }}
+                accessibilityLabel="Status WhatsApp Gateway"
+              >
+                <View style={styles.drawerGatewayHeader}>
+                  <View
+                    style={[
+                      styles.drawerGatewayDot,
+                      liveGatewayStatus.isConnected ? styles.drawerGatewayDotConnected : styles.drawerGatewayDotWarning,
+                    ]}
+                  />
+                  <Text
+                    style={[
+                      styles.drawerGatewayTitle,
+                      liveGatewayStatus.isConnected && styles.drawerGatewayTitleConnected,
+                    ]}
+                  >
+                    {liveGatewayStatus.isConnected ? 'Gateway Terhubung' : 'Gateway Belum Aktif'}
+                  </Text>
                 </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.sidebarUserName} numberOfLines={1}>
+                <Text style={styles.drawerGatewayDesc} numberOfLines={1}>
+                  {liveGatewayStatus.isConnected
+                    ? (liveGatewayStatus.phoneNumber ? `Nomor: ${liveGatewayStatus.phoneNumber}` : 'WhatsApp siap sinkronisasi pesan')
+                    : 'Tautkan nomor WhatsApp untuk sinkronisasi pesan'}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Baris Profil Pengguna: Avatar, Nama, Email, & Tombol Logout */}
+              <View style={styles.drawerUserProfileRow}>
+                <View style={styles.drawerProfileAvatarBox}>
+                  <Text style={styles.drawerProfileAvatarText}>{userInitials}</Text>
+                  <View style={styles.drawerProfileOnlineDot} />
+                </View>
+                <View style={styles.drawerProfileInfo}>
+                  <Text style={styles.drawerProfileName} numberOfLines={1} ellipsizeMode="tail">
                     {userFullName}
                   </Text>
-                  <Text style={styles.sidebarUserRole} numberOfLines={1}>
-                    {user.email}
+                  <Text style={styles.drawerProfileEmail} numberOfLines={1} ellipsizeMode="middle">
+                    {user?.email || 'user@wabiz.b2b'}
                   </Text>
                 </View>
                 <TouchableOpacity
-                  style={styles.sidebarLogoutBtn}
-                  activeOpacity={0.7}
+                  style={styles.drawerLogoutBtn}
+                  activeOpacity={0.75}
                   onPress={handleLogout}
-                  accessibilityLabel="Keluar dari akun"
+                  accessibilityLabel="Keluar dari akun WABiz"
                 >
-                  <AppIcon name="log-out" size={14} color="#9FB2A9" />
+                  <AppIcon name="log-out" size={15} color="#F87171" />
                 </TouchableOpacity>
+              </View>
+
+              {/* Versi WABiz */}
+              <View style={styles.drawerVersionRow}>
+                <Text style={styles.drawerVersionText}>WABiz v2.4 • Enterprise B2B</Text>
               </View>
             </View>
           </View>
         </View>
-      )}
+      </Modal>
+    )}
+
+      {/* Modal Notifikasi */}
+      <NotificationsModal
+        visible={isNotificationsOpen}
+        onClose={() => {
+          setIsNotificationsOpen(false);
+          refreshUnreadNotifications();
+        }}
+        organizationId={currentOrg?.id}
+        userId={user?.id}
+        onNavigateToItem={handleNotificationNavigate}
+        isDesktop={isDesktop}
+      />
     </SafeAreaView>
   );
 }
@@ -2137,16 +2193,16 @@ export default function App() {
 // ==========================================
 // STYLING DETAIL B2B SAAS (PIXEL PERFECT)
 // ==========================================
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemePalette) => StyleSheet.create({
   appRoot: {
     flex: 1,
-    backgroundColor: COLORS.forestDark,
+    backgroundColor: colors.background,
     paddingTop: Platform.OS === 'android' ? (RNStatusBar.currentHeight ?? 0) : 0,
   },
   layoutWrapper: {
     flex: 1,
     flexDirection: 'row',
-    backgroundColor: COLORS.neutralBg,
+    backgroundColor: colors.background,
   },
 
   // ----------------------------------------
@@ -2154,9 +2210,9 @@ const styles = StyleSheet.create({
   // ----------------------------------------
   desktopSidebar: {
     width: 256,
-    backgroundColor: COLORS.forestDark,
+    backgroundColor: colors.sidebarBg,
     borderRightWidth: 1,
-    borderRightColor: 'rgba(255, 255, 255, 0.08)',
+    borderRightColor: colors.border,
     flexDirection: 'column',
     justifyContent: 'space-between',
   },
@@ -2164,26 +2220,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 22,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: colors.border,
   },
   brandBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
-  brandMonogram: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    backgroundColor: COLORS.emerald,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  brandMonogramText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 18,
-    letterSpacing: -0.5,
+  officialBrandLogoSidebar: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
   },
   brandTitleRow: {
     flexDirection: 'row',
@@ -2232,13 +2279,15 @@ const styles = StyleSheet.create({
   sidebarNavItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 9,
+    paddingVertical: 10,
     paddingHorizontal: 12,
-    borderRadius: 7,
+    borderRadius: 8,
     marginBottom: 3,
   },
   sidebarNavItemActive: {
-    backgroundColor: 'rgba(22, 163, 106, 0.16)',
+    backgroundColor: 'rgba(13, 148, 136, 0.15)',
+    borderLeftWidth: 3,
+    borderLeftColor: COLORS.emerald,
   },
   sidebarNavIconWrapper: {
     width: 24,
@@ -2316,17 +2365,19 @@ const styles = StyleSheet.create({
   },
   sidebarUserName: {
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 17,
   },
   sidebarUserRole: {
-    color: '#8A9E95',
+    color: '#94A3B8',
     fontSize: 10,
+    marginTop: 2,
   },
   sidebarLogoutBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 6,
+    width: 34,
+    height: 34,
+    borderRadius: 8,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2337,109 +2388,275 @@ const styles = StyleSheet.create({
   // ----------------------------------------
   mainContentArea: {
     flex: 1,
-    backgroundColor: COLORS.neutralBg,
     flexDirection: 'column',
+    backgroundColor: colors.background,
   },
   topHeader: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    paddingHorizontal: 22,
-    paddingVertical: 14,
+    borderBottomColor: colors.border,
+    paddingHorizontal: 24,
+    paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     minHeight: 64,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 1px 2px 0 rgba(16, 24, 40, 0.04)',
+      },
+      default: {
+        elevation: 1,
+      },
+    }),
+  },
+  topHeaderMobile: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    paddingTop: (Platform.select<any>({
+      web: 'max(36px, env(safe-area-inset-top, 36px))',
+      default: 36,
+    })),
+    minHeight: 76,
   },
   topHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 14,
     flex: 1,
+    minWidth: 0,
+  },
+  topHeaderLeftMobile: {
+    gap: 6,
+    flexShrink: 1,
+    minWidth: 0,
   },
   mobileMenuButton: {
-    width: 36,
-    height: 36,
+    width: 32,
+    height: 32,
     borderRadius: 7,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
   topHeaderTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
+    letterSpacing: -0.3,
+    lineHeight: 25,
+  },
+  topHeaderTitleMobile: {
+    fontSize: 14,
+    fontWeight: '700',
     letterSpacing: -0.2,
+    lineHeight: 18,
   },
   topHeaderSubtitle: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
-    marginTop: 1,
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 2,
+    lineHeight: 17,
+  },
+  topHeaderSubtitleMobile: {
+    fontSize: 11,
+    lineHeight: 15,
   },
   topHeaderRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
+  },
+  topHeaderRightMobile: {
+    gap: 5,
+    flexShrink: 0,
   },
   topHeaderSearchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 7,
+    borderColor: colors.border,
+    borderRadius: 8,
     paddingHorizontal: 10,
-    width: 240,
-    height: 36,
+    width: 220,
+    height: 38,
+  },
+  topHeaderSearchBoxFocused: {
+    borderColor: COLORS.teal,
+    backgroundColor: colors.surfaceCard,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 0 0 3px rgba(13, 148, 136, 0.15)',
+      },
+    }),
   },
   topHeaderSearchInput: {
     flex: 1,
-    fontSize: 12,
-    color: COLORS.textDark,
+    fontSize: 13,
+    color: colors.textPrimary,
     marginLeft: 8,
     paddingVertical: 0,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   iconCircleButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 40,
+    height: 40,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     position: 'relative',
+  },
+  iconCircleButtonMobile: {
+    width: 32,
+    height: 32,
+    borderRadius: 7,
   },
   bellNoticeDot: {
     position: 'absolute',
-    top: 8,
-    right: 8,
+    top: 6,
+    right: 6,
     width: 6,
     height: 6,
     borderRadius: 3,
     backgroundColor: COLORS.emerald,
   },
+  bellBadgePill: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: '#EF4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 2,
+    borderWidth: 1.5,
+    borderColor: colors.isDark ? '#101010' : '#FFFFFF',
+  },
+  bellBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '800',
+    lineHeight: 11,
+  },
+  topProfilePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    height: 38,
+  },
+  topProfilePillMobile: {
+    gap: 5,
+    paddingVertical: 2,
+    paddingHorizontal: 5,
+    height: 32,
+    maxWidth: 135,
+    flexShrink: 0,
+  },
+  topAvatarOnlyMobileBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    marginLeft: 4,
+  },
+  topProfileTextGroup: {
+    maxWidth: 130,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  topProfileTextGroupMobile: {
+    maxWidth: 95,
+    minWidth: 0,
+    flexShrink: 1,
+  },
+  topProfileName: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    lineHeight: 15,
+  },
+  topProfileNameMobile: {
+    fontSize: 11,
+    fontWeight: '700',
+    lineHeight: 14,
+  },
+  topProfileRole: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: colors.accent,
+    letterSpacing: 0.5,
+    marginTop: 1,
+    lineHeight: 11,
+  },
+  topProfileRoleMobile: {
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    marginTop: 0,
+    lineHeight: 10,
+  },
   topAvatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: COLORS.forestDark,
+    width: 26,
+    height: 26,
+    borderRadius: 6,
+    backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.2)' : COLORS.forestDark,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  topAvatarText: {
-    color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 12,
+  topAvatarMobile: {
+    width: 20,
+    height: 20,
+    borderRadius: 5,
   },
+  topAvatarText: {
+    color: colors.isDark ? colors.accent : '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 11,
+  },
+  topAvatarMobileText: {
+    fontSize: 9.5,
+    fontWeight: '800',
+  },
+  topAvatarOnlineDot: {
+    position: 'absolute',
+    bottom: -1,
+    right: -1,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+    borderWidth: 1,
+    borderColor: colors.isDark ? '#181818' : '#FFFFFF',
+  },
+
 
   // ----------------------------------------
   // CANVAS SCROLL & PADDING
   // ----------------------------------------
   scrollCanvas: {
     flex: 1,
-    backgroundColor: COLORS.neutralBg,
+    backgroundColor: colors.background,
   },
   scrollContentContainer: {
     paddingHorizontal: 26,
@@ -2456,101 +2673,148 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingTop: 16,
     paddingBottom: 20,
-    backgroundColor: COLORS.neutralBg,
+    backgroundColor: colors.background,
   },
   chatViewWrapperMobile: {
-    paddingHorizontal: 10,
-    paddingTop: 10,
-    paddingBottom: 76,
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    backgroundColor: colors.background,
+  },
+  chatViewWrapperMobileDetail: {
+    paddingHorizontal: 0,
+    paddingTop: 0,
+    paddingBottom: 0,
+    backgroundColor: colors.background,
   },
   pageContainer: {
     gap: 20,
+  },
+  metricsAmbientSection: {
+    gap: 12,
   },
 
   // ----------------------------------------
   // KARTU STATUS GATEWAY WHATSAPP
   // ----------------------------------------
   gatewayCard: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: COLORS.warningBorder,
-    padding: 20,
-    gap: 14,
+    borderColor: colors.border,
+    padding: 16,
+    gap: 12,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 1px 3px 0 rgba(16, 24, 40, 0.05), 0 1px 2px -1px rgba(16, 24, 40, 0.03)',
+      },
+      default: {
+        elevation: 2,
+      },
+    }),
   },
   gatewayHeaderRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    flexWrap: 'wrap',
     gap: 10,
   },
   gatewayTitleGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
+    flex: 1,
+    minWidth: 0,
   },
   gatewayIconBox: {
-    width: 38,
-    height: 38,
+    width: 36,
+    height: 36,
     borderRadius: 8,
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
   gatewayTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   gatewaySubtitle: {
-    fontSize: 12,
-    color: COLORS.textSecondary,
+    fontSize: 11,
+    color: colors.textSecondary,
     marginTop: 1,
   },
   gatewayDescription: {
-    fontSize: 13,
-    color: COLORS.textDark,
-    lineHeight: 20,
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 18,
   },
   gatewayMetaStrip: {
     flexDirection: 'row',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+    borderColor: colors.border,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
     alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 12,
+    justifyContent: 'space-between',
+  },
+  gatewayMetaStripMobile: {
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    gap: 6,
   },
   gatewayMetaItem: {
     flexDirection: 'column',
     gap: 2,
   },
+  gatewayMetaItemMobile: {
+    flex: 1,
+    minWidth: 80,
+  },
   gatewayMetaLabel: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
+    fontSize: 10,
+    color: colors.textSecondary,
     fontWeight: '500',
   },
   gatewayMetaVal: {
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   gatewayMetaDivider: {
     width: 1,
-    height: 24,
+    height: 22,
     backgroundColor: COLORS.border,
   },
   gatewayActionRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    flexWrap: 'wrap',
+  },
+  gatewayActionRowMobile: {
+    flexDirection: 'row',
+    width: '100%',
+    gap: 8,
+  },
+  gatewayBtnMobilePrimary: {
+    flex: 1,
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  gatewayBtnMobileSecondary: {
+    flex: 1,
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   // ----------------------------------------
@@ -2581,9 +2845,9 @@ const styles = StyleSheet.create({
   statusPillActive: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.accentBorder,
     paddingHorizontal: 9,
     paddingVertical: 4,
     borderRadius: 20,
@@ -2598,7 +2862,7 @@ const styles = StyleSheet.create({
   statusPillTextActive: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
 
   // ----------------------------------------
@@ -2613,11 +2877,11 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   sectionSubtitleNote: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   metricsGrid: {
     flexDirection: 'row',
@@ -2626,62 +2890,75 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   metricCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 9,
+    backgroundColor: colors.surfaceCard,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 16,
+    borderColor: colors.border,
+    padding: 14,
     justifyContent: 'space-between',
-    minHeight: 115,
+    minHeight: 112,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 1px 3px 0 rgba(15, 23, 42, 0.05), 0 1px 2px -1px rgba(15, 23, 42, 0.05)',
+      },
+      default: {
+        elevation: 2,
+      },
+    }),
   },
   metricCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
   },
   metricLabel: {
     fontSize: 12,
+    lineHeight: 16,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
+    flex: 1,
+    minWidth: 0,
   },
   metricIconBox: {
     width: 26,
     height: 26,
     borderRadius: 6,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
   },
   metricValue: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '800',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginVertical: 4,
     letterSpacing: -0.5,
   },
   metricFooter: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+    flexWrap: 'wrap',
   },
   metricBadge: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
   },
   metricBadgeText: {
     fontSize: 10,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   metricSubtext: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
     flex: 1,
   },
 
@@ -2697,10 +2974,10 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
   },
   panelCard: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 18,
     gap: 14,
   },
@@ -2709,17 +2986,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
     paddingBottom: 12,
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  panelCardHeaderMobile: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 12,
   },
   panelCardTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   panelCardBadge: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontWeight: '500',
   },
   panelProgressText: {
@@ -2729,10 +3013,10 @@ const styles = StyleSheet.create({
   },
   progressBarTrack: {
     height: 6,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 3,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     overflow: 'hidden',
     marginTop: -4,
   },
@@ -2753,9 +3037,9 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.accentBorder,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 1,
@@ -2765,7 +3049,7 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 10,
     borderWidth: 1.5,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 1,
@@ -2782,16 +3066,16 @@ const styles = StyleSheet.create({
   checkItemTitleDone: {
     fontSize: 13,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   checkItemTitlePending: {
     fontSize: 13,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   checkItemDesc: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
     marginTop: 1,
   },
 
@@ -2809,9 +3093,9 @@ const styles = StyleSheet.create({
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 14,
@@ -2819,13 +3103,13 @@ const styles = StyleSheet.create({
   emptyStateTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 6,
     textAlign: 'center',
   },
   emptyStateDescription: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 19,
     maxWidth: 440,
@@ -2856,9 +3140,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   btnSecondary: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     paddingHorizontal: 14,
     paddingVertical: 9,
     borderRadius: 7,
@@ -2866,7 +3150,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   btnSecondaryText: {
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     fontWeight: '600',
     fontSize: 13,
   },
@@ -2891,9 +3175,9 @@ const styles = StyleSheet.create({
   searchBarBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 7,
     paddingHorizontal: 12,
     height: 38,
@@ -2903,7 +3187,7 @@ const styles = StyleSheet.create({
   searchTextInput: {
     flex: 1,
     fontSize: 13,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginLeft: 8,
     paddingVertical: 0,
   },
@@ -2912,7 +3196,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   filterPillActive: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
     borderColor: COLORS.emerald,
     borderRadius: 6,
@@ -2925,15 +3209,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   filterPill: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
   filterPillText: {
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontSize: 12,
     fontWeight: '500',
   },
@@ -2944,13 +3228,13 @@ const styles = StyleSheet.create({
   tableHeaderRow: {
     flexDirection: 'row',
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
     paddingBottom: 10,
   },
   tableHeaderCell: {
     fontSize: 11,
     fontWeight: '700',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -2960,10 +3244,10 @@ const styles = StyleSheet.create({
   // ----------------------------------------
   campaignStatsStrip: {
     flexDirection: 'row',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 9,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 16,
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -2976,70 +3260,83 @@ const styles = StyleSheet.create({
   },
   campaignStatLabel: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontWeight: '500',
     marginBottom: 2,
   },
   campaignStatVal: {
     fontSize: 15,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   campaignHeaderIcon: {
     width: 28,
     height: 28,
     borderRadius: 6,
-    backgroundColor: '#EAF6F0',
+    backgroundColor: colors.isDark ? 'rgba(66, 191, 176, 0.15)' : '#EAF6F0',
     alignItems: 'center',
     justifyContent: 'center',
   },
   panelCardSubtitle: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   campaignErrorCard: {
     padding: 14,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.dangerBg,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: colors.dangerBorder,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
   },
   campaignKpiStrip: {
     flexDirection: 'row',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 12,
     alignItems: 'center',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
     gap: 8,
   },
+  campaignKpiStripMobile: {
+    padding: 10,
+    gap: 10,
+  },
   campaignKpiItem: {
     flex: 1,
     minWidth: 90,
     alignItems: 'center',
   },
+  campaignKpiItemMobile: {
+    minWidth: 80,
+    backgroundColor: colors.surfaceCard,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
   campaignKpiDivider: {
     width: 1,
     height: 24,
-    backgroundColor: COLORS.border,
+    backgroundColor: colors.border,
   },
   campaignKpiLabel: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontWeight: '500',
     marginBottom: 2,
   },
   campaignKpiVal: {
     fontSize: 14,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   recentCampaignRow: {
     flexDirection: 'row',
@@ -3048,39 +3345,39 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.surface,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceCard,
     gap: 10,
   },
   recentCampaignName: {
     fontSize: 13,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   recentCampaignMeta: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   recentCampaignDot: {
     fontSize: 11,
-    color: COLORS.borderStrong,
+    color: colors.textMuted,
   },
   recentCampaignAction: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 4,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
   },
   recentCampaignActionText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   botConfigCard: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 18,
     gap: 14,
   },
@@ -3089,7 +3386,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
     paddingBottom: 12,
   },
   botParamGrid: {
@@ -3103,13 +3400,13 @@ const styles = StyleSheet.create({
   },
   botParamLabel: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 2,
   },
   botParamVal: {
     fontSize: 13,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   teamMemberRow: {
     flexDirection: 'row',
@@ -3120,16 +3417,16 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.accentBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
   memberAvatarText: {
     fontSize: 14,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   memberInfo: {
     flex: 1,
@@ -3142,7 +3439,7 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 14,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   roleBadgeOwner: {
     backgroundColor: 'rgba(18, 60, 50, 0.08)',
@@ -3153,11 +3450,11 @@ const styles = StyleSheet.create({
   roleBadgeTextOwner: {
     fontSize: 10,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   memberEmail: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
 
@@ -3184,24 +3481,24 @@ const styles = StyleSheet.create({
   formLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   formInputMock: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 7,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
   formInputText: {
     fontSize: 13,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     fontWeight: '500',
   },
   formInputMono: {
     fontSize: 12,
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
     fontWeight: '600',
   },
@@ -3211,86 +3508,460 @@ const styles = StyleSheet.create({
   // ----------------------------------------
   mobileBottomNav: {
     flexDirection: 'row',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.bottomNavBg,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingVertical: 8,
-    paddingBottom: Platform.OS === 'ios' ? 22 : 10,
+    borderTopColor: colors.border,
+    paddingVertical: 4,
+    paddingBottom: (Platform.select<any>({
+      web: 'max(10px, env(safe-area-inset-bottom, 10px))',
+      default: Platform.OS === 'ios' ? 24 : 10,
+    })),
     justifyContent: 'space-around',
     alignItems: 'center',
+    ...Platform.select({
+      web: {
+        boxShadow: colors.isDark ? '0 -2px 10px rgba(0, 0, 0, 0.5)' : '0 -2px 10px rgba(15, 23, 42, 0.05)',
+      },
+      default: {
+        elevation: 6,
+      },
+    }),
   },
   mobileBottomNavItem: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 3,
+    paddingVertical: 3,
+    minHeight: 48,
   },
   mobileNavIconBox: {
     paddingHorizontal: 12,
     paddingVertical: 4,
-    borderRadius: 14,
+    borderRadius: 16,
+    marginBottom: 2,
   },
   mobileNavIconBoxActive: {
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
   },
   mobileBottomNavLabel: {
     fontSize: 10,
     fontWeight: '500',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   mobileBottomNavLabelActive: {
-    color: COLORS.forestDark,
+    color: colors.accent,
     fontWeight: '700',
   },
 
   // ----------------------------------------
-  // DRAWER SLIDEOVER PADA MOBILE
+  // DRAWER SLIDEOVER PADA MOBILE (NAVY SAAS DENGAN HEADER HOLOGRAFIK)
   // ----------------------------------------
   mobileDrawerOverlay: {
-    position: 'absolute',
+    position: (Platform.select({ web: 'fixed', default: 'absolute' }) as any),
     top: 0,
     bottom: 0,
     left: 0,
     right: 0,
-    zIndex: 999,
+    width: (Platform.select({ web: '100vw', default: '100%' }) as any),
+    height: (Platform.select({ web: '100dvh', default: '100%' }) as any),
+    zIndex: 99999,
     flexDirection: 'row',
   },
   mobileDrawerBackdrop: {
-    position: 'absolute',
+    position: (Platform.select({ web: 'fixed', default: 'absolute' }) as any),
     top: 0,
     bottom: 0,
     left: 0,
     right: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    width: (Platform.select({ web: '100vw', default: '100%' }) as any),
+    height: (Platform.select({ web: '100dvh', default: '100%' }) as any),
+    zIndex: 99998,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
   },
   mobileDrawerContent: {
-    width: 275,
-    backgroundColor: COLORS.forestDark,
+    width: '82%',
+    maxWidth: 310,
+    height: (Platform.select({ web: '100dvh', default: '100%' }) as any),
+    backgroundColor: '#071426',
+    borderRightWidth: 1,
+    borderRightColor: 'rgba(45, 212, 191, 0.2)',
     flexDirection: 'column',
-    justifyContent: 'space-between',
-    zIndex: 1000,
+    zIndex: 99999,
+    elevation: 25,
+    ...Platform.select({
+      web: {
+        boxShadow: '4px 0 28px rgba(0, 0, 0, 0.75)',
+      },
+    }),
   },
+
+  // Header Drawer dengan Elemen Holografik Biru-Teal
   mobileDrawerHeader: {
-    paddingHorizontal: 18,
-    paddingVertical: 18,
+    flexShrink: 0,
+    backgroundColor: '#08162B',
+    position: 'relative',
+    overflow: 'hidden',
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
+    borderBottomColor: 'rgba(45, 212, 191, 0.2)',
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    paddingTop: (Platform.select<any>({
+      web: 'max(36px, env(safe-area-inset-top, 36px))',
+      default: 36,
+    })),
+  },
+  drawerHoloGlowCyan: {
+    position: 'absolute',
+    top: -30,
+    right: -20,
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    backgroundColor: 'rgba(6, 182, 212, 0.18)',
+  },
+  drawerHoloGlowTeal: {
+    position: 'absolute',
+    bottom: -25,
+    left: -20,
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: 'rgba(13, 148, 136, 0.22)',
+  },
+  drawerHoloWaveRing1: {
+    position: 'absolute',
+    right: -30,
+    top: -30,
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    borderWidth: 1,
+    borderColor: 'rgba(45, 212, 191, 0.12)',
+  },
+  drawerHoloWaveRing2: {
+    position: 'absolute',
+    right: -55,
+    top: -55,
+    width: 190,
+    height: 190,
+    borderRadius: 95,
+    borderWidth: 1,
+    borderColor: 'rgba(6, 182, 212, 0.06)',
+  },
+  drawerHoloParticle1: {
+    position: 'absolute',
+    top: 10,
+    right: 48,
+    width: 3.5,
+    height: 3.5,
+    borderRadius: 2,
+    backgroundColor: '#2DD4BF',
+    opacity: 0.8,
+  },
+  drawerHoloParticle2: {
+    position: 'absolute',
+    bottom: 12,
+    right: 38,
+    width: 3,
+    height: 3,
+    borderRadius: 1.5,
+    backgroundColor: '#38BDF8',
+    opacity: 0.7,
+  },
+  drawerHoloParticle3: {
+    position: 'absolute',
+    top: 24,
+    left: 20,
+    width: 2.5,
+    height: 2.5,
+    borderRadius: 1.25,
+    backgroundColor: '#67E8F9',
+    opacity: 0.5,
+  },
+  drawerBrandRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 10,
+  },
+  drawerLogoBadgeContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(11, 23, 44, 0.95)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(45, 212, 191, 0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      web: {
+        boxShadow: '0 2px 10px rgba(6, 182, 212, 0.3)',
+      },
+      default: {
+        elevation: 4,
+      },
+    }),
+  },
+  officialBrandLogoDrawer: {
+    width: 36,
+    height: 36,
+    borderRadius: 9,
+  },
+  drawerBrandInfo: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  drawerBrandTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  drawerBrandTitle: {
+    fontSize: 16.5,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    color: '#FFFFFF',
+  },
+  drawerBrandTierBadge: {
+    backgroundColor: 'rgba(20, 184, 166, 0.22)',
+    paddingHorizontal: 5,
+    paddingVertical: 1.5,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(45, 212, 191, 0.45)',
+  },
+  drawerBrandTierText: {
+    color: '#2DD4BF',
+    fontSize: 8.5,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  drawerOrgRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 3,
+  },
+  drawerBrandWorkspace: {
+    color: '#94A3B8',
+    fontSize: 11,
+    fontWeight: '600',
+    flexShrink: 1,
+  },
+  drawerRoleBadge: {
+    backgroundColor: 'rgba(45, 212, 191, 0.2)',
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(45, 212, 191, 0.45)',
+    flexShrink: 0,
+  },
+  drawerRoleBadgeText: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: '#2DD4BF',
+    letterSpacing: 0.5,
   },
   drawerCloseBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
     alignItems: 'center',
     justifyContent: 'center',
   },
+
+  // List Navigasi Drawer
   mobileDrawerNavList: {
     flex: 1,
+    minHeight: 0,
+    paddingHorizontal: 10,
+    ...Platform.select({
+      web: {
+        overflowY: 'auto' as any,
+      },
+    }),
+  },
+  mobileDrawerNavScrollContent: {
+    paddingTop: 8,
+    paddingBottom: 16,
+  },
+  drawerSectionHeading: {
+    fontSize: 9.5,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    color: '#64748B',
+    marginBottom: 6,
+    marginTop: 6,
+    paddingHorizontal: 10,
+  },
+  drawerNavItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 9,
     paddingHorizontal: 12,
-    paddingTop: 16,
+    borderRadius: 8,
+    marginBottom: 3,
+    position: 'relative',
+    backgroundColor: 'transparent',
+  },
+  drawerNavItemActive: {
+    backgroundColor: 'rgba(13, 148, 136, 0.2)',
+    borderLeftWidth: 3,
+    borderLeftColor: '#2DD4BF',
+  },
+  drawerActiveIndicator: {
+    display: 'none',
+  },
+  drawerNavIconWrapper: {
+    width: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  drawerNavLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#CBD5E1',
+    flex: 1,
+  },
+  drawerNavLabelActive: {
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  drawerItemBadge: {
+    backgroundColor: '#0D9488',
+    paddingHorizontal: 6,
+    paddingVertical: 1.5,
+    borderRadius: 10,
+  },
+  drawerItemBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#FFFFFF',
+  },
+
+  // Footer Drawer: Selalu dipin di bagian bawah dengan flexShrink: 0
+  drawerFooter: {
+    flexShrink: 0,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(45, 212, 191, 0.15)',
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: (Platform.select<any>({
+      web: 'max(24px, env(safe-area-inset-bottom, 24px))',
+      default: 24,
+    })),
+    backgroundColor: '#071426',
+    gap: 10,
+  },
+  drawerGatewayStatusBox: {
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  drawerGatewayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
+  drawerGatewayDot: {
+    width: 6.5,
+    height: 6.5,
+    borderRadius: 3.5,
+  },
+  drawerGatewayDotWarning: {
+    backgroundColor: '#F59E0B',
+  },
+  drawerGatewayDotConnected: {
+    backgroundColor: '#10B981',
+  },
+  drawerGatewayTitle: {
+    color: '#FDE68A',
+    fontSize: 10.5,
+    fontWeight: '700',
+  },
+  drawerGatewayTitleConnected: {
+    color: '#6EE7B7',
+  },
+  drawerGatewayDesc: {
+    color: '#8A9E95',
+    fontSize: 9.5,
+    lineHeight: 13,
+  },
+  drawerUserProfileRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  drawerProfileAvatarBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(45, 212, 191, 0.18)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(45, 212, 191, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  drawerProfileAvatarText: {
+    color: '#2DD4BF',
+    fontWeight: '800',
+    fontSize: 12.5,
+  },
+  drawerProfileOnlineDot: {
+    position: 'absolute',
+    bottom: -1,
+    right: -1,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+    borderWidth: 1.5,
+    borderColor: '#071426',
+  },
+  drawerProfileInfo: {
+    flex: 1,
+    minWidth: 0,
+  },
+  drawerProfileName: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    lineHeight: 16,
+  },
+  drawerProfileEmail: {
+    fontSize: 10,
+    color: '#94A3B8',
+    marginTop: 1,
+  },
+  drawerLogoutBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  drawerVersionRow: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 2,
+  },
+  drawerVersionText: {
+    fontSize: 9.5,
+    fontWeight: '500',
+    color: '#64748B',
   },
   // ----------------------------------------
   // LOG AKTIVITAS TERBARU DASHBOARD
@@ -3299,17 +3970,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 10,
-    backgroundColor: '#FAFCFB',
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E4EAE6',
+    borderColor: colors.border,
     gap: 10,
   },
   recentActivityAvatar: {
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: '#059669',
+    backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3321,27 +3992,29 @@ const styles = StyleSheet.create({
   recentActivityName: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#17231F',
+    color: colors.textPrimary,
   },
   recentActivityTime: {
     fontSize: 10,
-    color: '#718078',
+    color: colors.textMuted,
   },
   recentActivitySnippet: {
     fontSize: 12,
-    color: '#718078',
+    color: colors.textSecondary,
     marginTop: 2,
   },
   recentActivityStatus: {
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 12,
-    backgroundColor: '#EAF6F0',
+    backgroundColor: colors.surfaceCard,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   recentActivityStatusText: {
     fontSize: 10,
     fontWeight: '600',
-    color: '#16A36A',
+    color: colors.accent,
   },
   btnViewAllActivities: {
     paddingVertical: 8,
@@ -3350,6 +4023,15 @@ const styles = StyleSheet.create({
   btnViewAllActivitiesText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#16A36A',
+    color: colors.accent,
   },
 });
+
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <AppContent />
+    </ThemeProvider>
+  );
+}

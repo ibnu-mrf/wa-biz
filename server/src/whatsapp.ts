@@ -44,6 +44,22 @@ export interface WhatsAppServiceState {
   lastError: string | null;
 }
 
+export type LinkedDeviceRevocationStatus =
+  | 'confirmed'
+  | 'unverified_socket_offline'
+  | 'unverified_timeout'
+  | 'unverified_error'
+  | 'skipped';
+
+export interface DisconnectResult {
+  success: boolean;
+  socketClosed: boolean;
+  localSessionDeleted: boolean;
+  deletedFilesCount: number;
+  revocationStatus: LinkedDeviceRevocationStatus;
+  message: string;
+}
+
 export class WhatsAppService {
   private socket: WASocket | null = null;
   private state: WhatsAppServiceState = {
@@ -58,6 +74,7 @@ export class WhatsAppService {
   };
 
   private currentQrRaw: string | null = null;
+  private currentQrDataUrl: string | null = null;
   private reconnectTimer: NodeJS.Timeout | null = null;
   private isExplicitlyClosed = false;
   private processedMessageIds = new Set<string>();
@@ -118,12 +135,18 @@ export class WhatsAppService {
     this.saveProcessedMessageIds();
   }
 
-  public getState(): WhatsAppServiceState {
-    return { ...this.state };
+  public getState(): WhatsAppServiceState & { qrDataUrl?: string | null; countdownSeconds?: number } {
+    const rawQr = this.getRawQr();
+    return {
+      ...this.state,
+      qrDataUrl: rawQr.isFresh ? this.currentQrDataUrl : null,
+      countdownSeconds: rawQr.isFresh ? Math.max(0, 40 - rawQr.ageSeconds) : 0,
+    };
   }
 
   public getRawQr(): {
     qr: string | null;
+    qrDataUrl: string | null;
     generatedAt: Date | null;
     count: number;
     isFresh: boolean;
@@ -137,6 +160,7 @@ export class WhatsAppService {
 
     return {
       qr: this.currentQrRaw,
+      qrDataUrl: isFresh ? this.currentQrDataUrl : null,
       generatedAt: this.state.qrGeneratedAt,
       count: this.state.qrCount,
       isFresh,
@@ -153,6 +177,7 @@ export class WhatsAppService {
         this.socket.ev.removeAllListeners('connection.update');
         this.socket.ev.removeAllListeners('creds.update');
         this.socket.ev.removeAllListeners('messages.upsert');
+        this.socket.ev.removeAllListeners('messages.update');
         this.socket.end(undefined);
       } catch {
         // Abaikan error saat cleanup socket yang sudah mati
@@ -211,6 +236,13 @@ export class WhatsAppService {
           this.state.lastQrAvailable = true;
           this.updateStatus('qr_ready');
 
+          try {
+            this.currentQrDataUrl = await qrcode.toDataURL(qr, { margin: 2, scale: 6 });
+          } catch (qrErr: any) {
+            console.error('[WhatsApp QR] Gagal pre-render data URL:', qrErr?.message || qrErr);
+            this.currentQrDataUrl = null;
+          }
+
           console.log(`[WhatsApp Diagnostic] QR #${this.state.qrCount} diterbitkan (${this.state.qrGeneratedAt.toLocaleTimeString()}). Menunggu pemindaian ponsel...`);
 
           if (config.showTerminalQr) {
@@ -243,6 +275,7 @@ export class WhatsAppService {
           this.state.reconnectAttempts = 0;
           this.state.qrCount = 0;
           this.currentQrRaw = null;
+          this.currentQrDataUrl = null;
           this.state.lastQrAvailable = false;
           this.state.lastError = null;
           this.socketConnectedAt = Date.now();
@@ -271,6 +304,7 @@ export class WhatsAppService {
           console.log(`[WhatsApp Diagnostic] Koneksi ditutup (StatusCode: ${statusCode || 'N/A'}, Alasan: ${errorMessage})`);
 
           this.currentQrRaw = null;
+          this.currentQrDataUrl = null;
           this.state.lastQrAvailable = false;
           this.state.lastError = errorMessage;
 
@@ -283,9 +317,18 @@ export class WhatsAppService {
           // KASUS 1: Kode 515 (restartRequired)
           // Ini adalah langkah normal protokol Multi-Device tepat setelah QR dipindai dan diverifikasi server!
           if (statusCode === DisconnectReason.restartRequired || statusCode === 515) {
+            if (this.isExplicitlyClosed) {
+              console.log('[WhatsApp Diagnostic] Sesi telah ditutup pengguna. Mengabaikan restartRequired (515).');
+              this.updateStatus('disconnected');
+              return;
+            }
             console.log('[WhatsApp Diagnostic] RestartRequired (515): Bagian normal dari handshaking awal Multi-Device setelah scan. Memulai ulang socket seketika...');
             this.cleanupSocket();
-            setTimeout(() => this.start(false), 500);
+            setTimeout(() => {
+              if (!this.isExplicitlyClosed) {
+                this.start(false);
+              }
+            }, 500);
             return;
           }
 
@@ -293,6 +336,13 @@ export class WhatsAppService {
           // Perangkat dicabut dari ponsel atau pairing ditolak
           if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
             console.warn('[WhatsApp Diagnostic] LoggedOut (401): Perangkat dicabut atau ditolak dari WhatsApp ponsel.');
+            this.isExplicitlyClosed = true;
+            this.state.phoneNumber = null;
+            this.state.whatsappName = null;
+            this.state.lastQrAvailable = false;
+            this.state.qrCount = 0;
+            this.currentQrRaw = null;
+            this.processedMessageIds.clear();
             this.updateStatus('logged_out');
             await this.cleanSessionFiles();
             return;
@@ -539,7 +589,10 @@ export class WhatsAppService {
   }
 
   private handleAutoReconnect(statusCode?: number): void {
-    if (this.isExplicitlyClosed) return;
+    if (this.isExplicitlyClosed || this.state.status === 'disconnected' || this.state.status === 'logged_out') {
+      console.log('[WhatsApp AutoReconnect] Sesi ditutup secara manual / logged out. Rekoneksi otomatis dibatalkan.');
+      return;
+    }
 
     if (this.state.reconnectAttempts >= config.maxReconnectRetries) {
       console.error(`[WhatsApp Diagnostic] Batas rekoneksi tercapai (${config.maxReconnectRetries}x). Berhenti mencoba otomatis.`);
@@ -557,6 +610,9 @@ export class WhatsAppService {
 
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = setTimeout(() => {
+      if (this.isExplicitlyClosed || this.state.status === 'disconnected' || this.state.status === 'logged_out') {
+        return;
+      }
       this.cleanupSocket();
       this.start(false);
     }, delay);
@@ -592,27 +648,55 @@ export class WhatsAppService {
     }
   }
 
-  public async disconnect(deleteSession = false): Promise<void> {
+  public async disconnect(deleteSession = true): Promise<DisconnectResult> {
     this.isExplicitlyClosed = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
 
-    if (this.socket) {
-      // Hanya panggil logout() ke server jika sesi sedang terhubung dan ingin dicabut permanen
-      if (deleteSession && this.state.status === 'connected') {
+    let revocationStatus: LinkedDeviceRevocationStatus = 'skipped';
+    let revocationMessage = '';
+
+    if (deleteSession) {
+      if (this.socket && this.state.status === 'connected') {
+        const TIMEOUT_MS = 4000;
+        let isTimedOut = false;
         try {
-          await this.socket.logout();
-        } catch {
-          // ignore
+          console.log('[WhatsApp Security] Mengirim sinyal logout ke server WhatsApp untuk mencabut status Companion Device...');
+          await Promise.race([
+            this.socket.logout(),
+            new Promise((_, reject) =>
+              setTimeout(() => {
+                isTimedOut = true;
+                reject(new Error('TIMEOUT_REVOCATION'));
+              }, TIMEOUT_MS)
+            ),
+          ]);
+          revocationStatus = 'confirmed';
+          console.log('[WhatsApp Security] Pencabutan Companion Device terkonfirmasi sukses oleh server WhatsApp.');
+        } catch (logoutErr: any) {
+          if (isTimedOut || logoutErr?.message === 'TIMEOUT_REVOCATION') {
+            revocationStatus = 'unverified_timeout';
+            console.warn(`[WhatsApp Security] Server WhatsApp tidak mengonfirmasi logout dalam batas waktu ${TIMEOUT_MS / 1000} detik.`);
+          } else {
+            revocationStatus = 'unverified_error';
+            console.warn('[WhatsApp Security] Gagal mengirim sinyal logout socket:', logoutErr?.message || logoutErr);
+          }
         }
+      } else {
+        revocationStatus = 'unverified_socket_offline';
+        console.log('[WhatsApp Security] Socket Baileys sedang offline/tidak terhubung saat pemutusan sesi dipicu. Sinyal pencabutan online tidak dapat dikirim.');
       }
+    }
+
+    if (this.socket) {
       this.cleanupSocket();
     }
 
+    let deletedCount = 0;
     if (deleteSession) {
-      await this.cleanSessionFiles();
+      deletedCount = await this.cleanSessionFiles();
     }
 
     this.state.phoneNumber = null;
@@ -620,23 +704,56 @@ export class WhatsAppService {
     this.state.lastQrAvailable = false;
     this.state.qrCount = 0;
     this.state.reconnectAttempts = 0;
+    this.state.lastError = null;
     this.currentQrRaw = null;
+    this.currentQrDataUrl = null;
+    this.processedMessageIds.clear();
     this.updateStatus('disconnected');
-    console.log('[WhatsApp Diagnostic] Sesi berhasil diputuskan.');
+
+    if (revocationStatus === 'confirmed') {
+      revocationMessage = 'Sesi WhatsApp berhasil diputuskan, otorisasi perangkat tertaut dikonfirmasi dicabut oleh server WhatsApp, dan seluruh kredensial sesi lokal dimusnahkan.';
+    } else if (deleteSession) {
+      revocationMessage = `Berkas sesi lokal telah dihapus (${deletedCount} file) dan socket ditutup. Namun pencabutan dari server WhatsApp belum terverifikasi secara online (${revocationStatus}). Silakan periksa menu 'Perangkat Tertaut' pada aplikasi WhatsApp ponsel Anda dan pilih 'Keluar' jika perangkat masih tercantum.`;
+    } else {
+      revocationMessage = 'Koneksi socket WhatsApp diputuskan.';
+    }
+
+    console.log(`[WhatsApp Security] Selesai: ${revocationMessage}`);
+
+    return {
+      success: true,
+      socketClosed: true,
+      localSessionDeleted: deleteSession,
+      deletedFilesCount: deletedCount,
+      revocationStatus,
+      message: revocationMessage,
+    };
   }
 
-  private async cleanSessionFiles(): Promise<void> {
+  public async cleanSessionFiles(): Promise<number> {
+    let deletedCount = 0;
     try {
       if (fs.existsSync(config.sessionDir)) {
         const files = fs.readdirSync(config.sessionDir);
         for (const file of files) {
-          fs.unlinkSync(path.join(config.sessionDir, file));
+          const filePath = path.join(config.sessionDir, file);
+          try {
+            if (fs.statSync(filePath).isDirectory()) {
+              fs.rmSync(filePath, { recursive: true, force: true });
+            } else {
+              fs.unlinkSync(filePath);
+            }
+            deletedCount++;
+          } catch (fileErr) {
+            console.warn(`[WhatsApp Security] Gagal menghapus file sesi ${file}:`, (fileErr as Error).message);
+          }
         }
-        console.log(`[WhatsApp Diagnostic] File sesi di ${config.sessionDir} berhasil dibersihkan.`);
+        console.log(`[WhatsApp Security] Sebanyak ${deletedCount} berkas sesi di ${config.sessionDir} berhasil dimusnahkan.`);
       }
     } catch (err) {
-      console.error('[WhatsApp Diagnostic] Gagal membersihkan folder sesi:', (err as Error).message);
+      console.error('[WhatsApp Security] Gagal membersihkan folder sesi:', (err as Error).message);
     }
+    return deletedCount;
   }
 
   private updateStatus(newStatus: ConnectionStatus): void {

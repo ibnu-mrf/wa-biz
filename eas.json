@@ -16,10 +16,25 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "ORG_GRADLE_PROJECT_reactNativeArchitectures": "arm64-v8a,armeabi-v7a"
+      }
+    },
+    "preview-arm64": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "ORG_GRADLE_PROJECT_reactNativeArchitectures": "arm64-v8a"
       }
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "android": {
+        "buildType": "app-bundle"
+      }
     }
   },
   "submit": {

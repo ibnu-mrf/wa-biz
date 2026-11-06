@@ -1,4 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
+import fs from 'fs';
+import path from 'path';
 import qrcode from 'qrcode';
 import { config, validateWorkerConfig } from './config';
 import { whatsappService } from './whatsapp';
@@ -12,6 +14,7 @@ import {
 import {
   loadProfileFromSupabase,
   isWorkerSupabaseConfigured,
+  createWorkerSupabaseClient,
   deleteConversation,
   deleteTeamMember,
 } from './supabase';
@@ -194,14 +197,15 @@ app.get('/api/qr', authenticateAndAuthorize({ requiredRole: 'admin', enforceWork
   }
 
   try {
-    // Generate data URL gambar base64 untuk kemudahan pairing visual lokal
-    const qrDataUrl = await qrcode.toDataURL(qrInfo.qr, { margin: 2, scale: 6 });
+    // Gunakan pre-cached data URL gambar base64 atau generate baru jika belum tersedia
+    const qrDataUrl = qrInfo.qrDataUrl || await qrcode.toDataURL(qrInfo.qr, { margin: 2, scale: 6 });
     res.json({
       success: true,
       status: 'qr_ready',
       qrCount: qrInfo.count,
       generatedAt: qrInfo.generatedAt,
       ageSeconds: qrInfo.ageSeconds,
+      countdownSeconds: Math.max(0, 40 - (qrInfo.ageSeconds || 0)),
       isFresh: qrInfo.isFresh,
       qrDataUrl,
       help: 'Buka WhatsApp di ponsel > Pengaturan/Titik Tiga > Perangkat Tertaut > Tautkan Perangkat.',
@@ -266,8 +270,28 @@ app.post('/api/send', sensitiveRateLimiter, authenticateAndAuthorize({ requiredR
 });
 
 // ==========================================
-// 6. ENDPOINT REKONEKSI & DISCONNECT (TERPROTEKSI ADMIN)
+// 6. ENDPOINT REKONEKSI, DISCONNECT & LOGOUT (TERPROTEKSI ADMIN)
 // ==========================================
+async function syncDatabaseGatewayDisconnected(targetOrgId: string): Promise<void> {
+  if (!isWorkerSupabaseConfigured() || !targetOrgId) return;
+  try {
+    const supabase = createWorkerSupabaseClient();
+    if (supabase) {
+      await supabase
+        .from('organization_whatsapp_configs')
+        .update({
+          is_active: false,
+          display_phone_number: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('organization_id', targetOrgId);
+      console.log(`[Database Sync] Status WhatsApp Gateway organisasi ${targetOrgId} di-set ke disconnected/inactive di database.`);
+    }
+  } catch (err: any) {
+    console.warn('[Database Sync] Gagal mengupdate status gateway di database:', err?.message || err);
+  }
+}
+
 app.post('/api/reconnect', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (_req: Request, res: Response) => {
   console.log('[API Diagnostic] Permintaan rekoneksi manual diterima via POST /api/reconnect.');
   await whatsappService.start(true);
@@ -278,12 +302,80 @@ app.post('/api/reconnect', sensitiveRateLimiter, authenticateAndAuthorize({ requ
 });
 
 app.post('/api/disconnect', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
-  const deleteSession = Boolean(req.body.deleteSession);
-  console.log(`[API] Permintaan disconnect diterima (deleteSession: ${deleteSession}).`);
-  await whatsappService.disconnect(deleteSession);
+  // Secara default, pemutusan sesi dari antarmuka selalu menghapus kredensial sesi lokal demi keamanan
+  const deleteSession = req.body.deleteSession !== undefined ? Boolean(req.body.deleteSession) : true;
+  const targetOrgId = req.authenticatedUser?.organizationId || config.workerOrgId;
+  console.log(`[API] Permintaan disconnect diterima (deleteSession: ${deleteSession}, Org: ${targetOrgId}).`);
+  const result = await whatsappService.disconnect(deleteSession);
+
+  if (deleteSession && targetOrgId) {
+    await syncDatabaseGatewayDisconnected(targetOrgId);
+  }
+
   res.json({
     success: true,
-    message: deleteSession ? 'Sesi diputuskan dan file kredensial lokal dihapus.' : 'Sesi diputuskan.',
+    data: result,
+    message: result.message,
+  });
+});
+
+app.post('/api/logout', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const targetOrgId = req.authenticatedUser?.organizationId || config.workerOrgId;
+  console.log(`[API Logout] Permintaan logout penuh diterima untuk organisasi ${targetOrgId}.`);
+  const result = await whatsappService.disconnect(true);
+
+  if (targetOrgId) {
+    await syncDatabaseGatewayDisconnected(targetOrgId);
+  }
+
+  res.json({
+    success: true,
+    data: result,
+    message: result.message,
+  });
+});
+
+app.get('/api/session/audit', authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), (_req: Request, res: Response) => {
+  const state = whatsappService.getState();
+  let sessionFilesCount = 0;
+  let hasSessionFiles = false;
+
+  try {
+    if (fs.existsSync(config.sessionDir)) {
+      const files = fs.readdirSync(config.sessionDir);
+      sessionFilesCount = files.length;
+      hasSessionFiles = files.length > 0;
+    }
+  } catch (err) {
+    console.warn('[Session Audit] Error membaca folder sesi:', (err as Error).message);
+  }
+
+  res.json({
+    success: true,
+    data: {
+      status: state.status,
+      phoneNumber: state.phoneNumber ? maskPhone(state.phoneNumber) : null,
+      hasSessionFiles,
+      sessionFilesCount,
+      isClean: !hasSessionFiles && state.status === 'disconnected',
+    },
+  });
+});
+
+app.post('/api/session/clean', sensitiveRateLimiter, authenticateAndAuthorize({ requiredRole: 'admin', enforceWorkerOrg: true }), async (req: Request, res: Response) => {
+  const targetOrgId = req.authenticatedUser?.organizationId || config.workerOrgId;
+  console.log(`[API Session Clean] Membersihkan seluruh berkas sesi pada folder ${config.sessionDir}...`);
+  await whatsappService.disconnect(true);
+  const deletedCount = await whatsappService.cleanSessionFiles();
+
+  if (targetOrgId) {
+    await syncDatabaseGatewayDisconnected(targetOrgId);
+  }
+
+  res.json({
+    success: true,
+    message: `Pembersihan sesi selesai. ${deletedCount} berkas kredensial dihapus.`,
+    deletedCount,
   });
 });
 
@@ -453,6 +545,7 @@ app.post('/api/campaigns/create', sensitiveRateLimiter, authenticateAndAuthorize
   res.json({
     success: true,
     data: result,
+    message: result.message,
   });
 });
 
@@ -476,6 +569,7 @@ app.post('/api/campaigns/:id/cancel', authenticateAndAuthorize({ requiredRole: '
   res.json({
     success: true,
     data: result,
+    message: result.message,
   });
 });
 
@@ -499,6 +593,7 @@ app.get('/api/campaigns/:id/recipients', authenticateAndAuthorize({ requiredRole
   res.json({
     success: true,
     data: result,
+    message: result.message,
   });
 });
 

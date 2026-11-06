@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
+    <title>%WEB_TITLE%</title>
+
+    <!-- PWA & Web App Manifest -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#124E3F" />
+    <meta name="description" content="Platform WhatsApp Business Management" />
+
+    <!-- Apple iOS Safari PWA Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="WABiz" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+
+    <!-- Icons -->
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
+
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* These styles make the body full-height and seamless */
+      html,
+      body {
+        height: 100%;
+        background-color: #FFFFFF;
+      }
+      @media (prefers-color-scheme: dark) {
+        html,
+        body {
+          background-color: #0B1120;
+        }
+      }
+      /* These styles disable body scrolling if you are using <ScrollView> */
+      body {
+        overflow: hidden;
+      }
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+        background-color: #FFFFFF;
+      }
+      @media (prefers-color-scheme: dark) {
+        #root {
+          background-color: #0B1120;
+        }
+      }
+      /* Hide scrollbar utility */
+      .no-scrollbar::-webkit-scrollbar,
+      [data-no-scrollbar="true"]::-webkit-scrollbar {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+      }
+      .no-scrollbar,
+      [data-no-scrollbar="true"] {
+        -ms-overflow-style: none !important;
+        scrollbar-width: none !important;
+      }
+    </style>
+
+    <!-- WABiz Enterprise Design System: Input Reset & Modern Focus Styles -->
+    <style id="wabiz-enterprise-inputs">
+      /* 1. Hilangkan outline atau garis hitam default browser secara universal */
+      *, *::before, *::after {
+        box-sizing: border-box;
+      }
+      input, textarea, select {
+        outline: none !important;
+        outline-style: none !important;
+        outline-width: 0 !important;
+        -webkit-tap-highlight-color: transparent !important;
+      }
+      input:focus, textarea:focus, select:focus {
+        outline: none !important;
+        outline-style: none !important;
+        outline-width: 0 !important;
+      }
+
+      /* 2. Standalone inputs & textareas: border teal WABiz (#0D9488) + soft ring */
+      input:not([data-embedded="true"]):focus,
+      textarea:focus {
+        border-color: #0D9488 !important;
+        box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15) !important;
+        transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out !important;
+      }
+
+      /* 3. Embedded inputs di dalam search bar atau input container */
+      input[data-embedded="true"]:focus {
+        border-color: transparent !important;
+        box-shadow: none !important;
+      }
+
+      /* 4. Container wrapper yang membungkus embedded input */
+      [data-input-container="true"]:focus-within,
+      .wabiz-input-container:focus-within {
+        border-color: #0D9488 !important;
+        box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15) !important;
+        transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out !important;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Use static rendering with Expo Router to support running without JavaScript. -->
+    <noscript> You need to enable JavaScript to run this app. </noscript>
+    <!-- The root element for your Expo app. -->
+    <div id="root"></div>
+
+    <!-- PWA Service Worker Registration -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker
+            .register('/sw.js')
+            .catch(function (error) {
+              console.warn('PWA service worker registration failed:', error);
+            });
+        });
+      }
+    </script>
+  </body>
+</html>

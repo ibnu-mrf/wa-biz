@@ -59,3 +59,8 @@ server/dist/
 test-results/
 playwright-report/
 playwright/.cache/
+
+# Scratch & APKs
+scratch/
+*.apk
+dist/*.apk

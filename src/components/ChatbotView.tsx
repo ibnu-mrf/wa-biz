@@ -10,8 +10,12 @@ import {
   Platform,
   Linking,
 } from 'react-native';
-import { COLORS, AppIcon } from '../theme';
+import { AppIcon, SHADOWS, useTheme, ThemePalette } from '../theme';
 import { OrgProfile, DEFAULT_ORG_PROFILE } from './SettingsView';
+import { normalizeInstitutionType } from '../lib/organizationTypes';
+import { notifyChatbotEvent } from '../lib/notifications';
+import { supabase } from '../lib/supabase';
+import { syncProfileToWorker } from '../lib/whatsappClient';
 import {
   AiResponseRules,
   IntentDetectionRules,
@@ -110,6 +114,8 @@ export function ChatbotView({
   orgProfile: externalProfile,
   setOrgProfile: externalSetProfile,
 }: ChatbotViewProps) {
+  const { isDark, colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   // Master Switch & Status
   const [isEnabled, setIsEnabled] = useState(true);
   const [activeTab, setActiveTab] = useState<ChatbotTab>('profile');
@@ -130,12 +136,31 @@ export function ChatbotView({
   const [rules, setRules] = useState<AiResponseRules>(DEFAULT_RESPONSE_RULES);
   // Intent Rules State
   const [intentRules, setIntentRules] = useState<IntentDetectionRules>(DEFAULT_INTENT_RULES);
+  const [newKeywordInput, setNewKeywordInput] = useState('');
+
+  const handleAddKeyword = () => {
+    const trimmed = newKeywordInput.trim().toLowerCase();
+    if (!trimmed) return;
+    if (!intentRules.triggerKeywords.includes(trimmed)) {
+      setIntentRules({
+        ...intentRules,
+        triggerKeywords: [...intentRules.triggerKeywords, trimmed],
+      });
+    }
+    setNewKeywordInput('');
+  };
+
+  const handleRemoveKeyword = (kwToRemove: string) => {
+    setIntentRules({
+      ...intentRules,
+      triggerKeywords: intentRules.triggerKeywords.filter((k) => k !== kwToRemove),
+    });
+  };
   // Escalation Settings State
   const [escalation, setEscalation] = useState<EscalationSettings>(DEFAULT_ESCALATION_SETTINGS);
 
   // Notification / Feedback State
   const [feedbackMsg, setFeedbackMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
-  const [copiedPayload, setCopiedPayload] = useState(false);
 
   // Interactive Simulator State
   const [simulatorInput, setSimulatorInput] = useState('');
@@ -148,6 +173,116 @@ export function ChatbotView({
       source: 'local_grounded_rules',
     },
   ]);
+
+  // Adaptasi Jenis Organisasi & Konteks Industri
+  const normalizedType = useMemo(
+    () => normalizeInstitutionType(profile.institutionType),
+    [profile.institutionType]
+  );
+  const isEdu = ['Pesantren', 'Sekolah Islam Terpadu', 'Madrasah'].includes(normalizedType);
+  const isRetail = normalizedType === 'UMKM / Bisnis Retail';
+  const isProperty = normalizedType === 'Properti / Kos-kosan';
+  const isService = normalizedType === 'Jasa / Konsultan';
+  const isHealth = normalizedType === 'Layanan Kesehatan';
+  const isFoundation = normalizedType === 'Yayasan / Organisasi Umum';
+
+  const capacityLabel = isEdu
+    ? 'Jumlah Santri / Siswa Aktif'
+    : isRetail
+    ? 'Estimasi Pelanggan / Member Aktif'
+    : isProperty
+    ? 'Jumlah Kamar / Penghuni Aktif'
+    : isService
+    ? 'Jumlah Klien / Prospek Aktif'
+    : isHealth
+    ? 'Kapasitas Pasien / Tempat Tidur'
+    : isFoundation
+    ? 'Jumlah Donatur / Penerima Manfaat'
+    : 'Kapasitas / Anggota Aktif';
+
+  const capacityPlaceholder = isEdu
+    ? 'Contoh: 1.250 Santri (Putra & Putri)'
+    : isRetail
+    ? 'Contoh: 1.500+ Pelanggan Terdaftar'
+    : isProperty
+    ? 'Contoh: 48 Kamar (36 Terisi)'
+    : isService
+    ? 'Contoh: 120 Klien Korporasi'
+    : isHealth
+    ? 'Contoh: 50 Tempat Tidur Rawat Inap'
+    : isFoundation
+    ? 'Contoh: 500+ Donatur Tetap'
+    : 'Contoh: 200+ Anggota';
+
+  const staffLabel = isEdu
+    ? (normalizedType === 'Pesantren' ? 'Jumlah Tenaga Pengajar & Asatidz' : 'Jumlah Guru & Tenaga Kependidikan')
+    : isRetail
+    ? 'Jumlah Karyawan & Pramuniaga'
+    : isProperty
+    ? 'Staf Pengelola & Keamanan'
+    : isService
+    ? 'Jumlah Konsultan & Staf Ahli'
+    : isHealth
+    ? 'Jumlah Dokter & Tenaga Medis'
+    : isFoundation
+    ? 'Jumlah Pengurus & Relawan'
+    : 'Jumlah Tim / Karyawan';
+
+  const staffPlaceholder = isEdu
+    ? (normalizedType === 'Pesantren' ? 'Contoh: 85 Asatidz & Staf Profesional' : 'Contoh: 60 Guru & Tenaga Kependidikan')
+    : isRetail
+    ? 'Contoh: 15 Karyawan & Pramuniaga'
+    : isProperty
+    ? 'Contoh: 4 Staf Kebersihan & Penjaga'
+    : isService
+    ? 'Contoh: 12 Konsultan & Associate'
+    : isHealth
+    ? 'Contoh: 20 Dokter & 35 Perawat'
+    : isFoundation
+    ? 'Contoh: 25 Pengurus & 100 Relawan'
+    : 'Contoh: 10 Staf Profesional';
+
+  const quickPrompts = useMemo(() => {
+    if (isRetail) {
+      return [
+        { label: 'Bagaimana cara memesan produk atau katalog terbaru?', desc: 'Menguji deteksi niat pembelian & katalog' },
+        { label: 'Di mana alamat toko/outlet & Google Maps?', desc: 'Menguji rujukan lokasi outlet resmi' },
+        { label: 'Berapa harga produk dan minimal pembelian?', desc: 'Menguji rujukan harga & transparansi promo' },
+        { label: 'Apakah tersedia pengiriman ke luar kota dan berapa ongkirnya?', desc: 'Menguji informasi logistik' },
+        { label: 'Kapan jam buka toko dan kontak CS pemesanan?', desc: 'Menguji jam operasional & kontak CS' },
+        { label: 'Saya ingin bicara langsung dengan CS penjualan.', desc: 'Menguji eskalasi ke tim CS penjualan' },
+      ];
+    }
+    if (isProperty) {
+      return [
+        { label: 'Apakah masih ada kamar kos kosong bulan ini?', desc: 'Menguji deteksi ketersediaan kamar' },
+        { label: 'Berapa harga sewa per bulan dan fasilitasnya apa saja?', desc: 'Menguji rujukan tarif & fasilitas kamar' },
+        { label: 'Di mana alamat lengkap kos & peraturan jam bertamu?', desc: 'Menguji lokasi & tata tertib kos' },
+        { label: 'Bagaimana prosedur booking atau survei kamar?', desc: 'Menguji alur reservasi/survei lokasi' },
+        { label: 'Apakah biaya sewa sudah termasuk listrik dan Wi-Fi?', desc: 'Menguji rincian fasilitas include' },
+        { label: 'Saya ingin bicara langsung dengan pengelola kos.', desc: 'Menguji eskalasi ke pengelola kos' },
+      ];
+    }
+    if (isService) {
+      return [
+        { label: 'Layanan konsultasi apa saja yang disediakan?', desc: 'Menguji ringkasan portofolio jasa' },
+        { label: 'Berapa estimasi biaya jasa atau paket penawaran?', desc: 'Menguji transparansi estimasi tarif' },
+        { label: 'Bagaimana alur kerja sama dan jadwal konsultasi awal?', desc: 'Menguji alur onboarding klien' },
+        { label: 'Di mana kantor dan kontak tim konsultan?', desc: 'Menguji rujukan alamat kantor resmi' },
+        { label: 'Saya ingin bicara langsung dengan tim konsultan.', desc: 'Menguji eskalasi ke konsultan ahli' },
+      ];
+    }
+    // Default Pendidikan (Pesantren, Sekolah, Madrasah)
+    return [
+      { label: 'Bagaimana cara mendaftar santri baru?', desc: 'Menguji deteksi niat pendaftaran & tautan portal PSB' },
+      { label: 'Di mana alamat lengkap lembaga & Google Maps?', desc: 'Menguji rujukan alamat & link maps resmi' },
+      { label: 'Berapa biaya pendaftaran & uang pangkal?', desc: 'Menguji kepatuhan anti-halusinasi biaya' },
+      { label: 'Berapa jumlah santri dan tenaga pengajar?', desc: 'Menguji penyajian statistik resmi' },
+      { label: 'Kapan jam operasional dan kontak CS resmi?', desc: 'Menguji informasi jam kerja & no WA eskalasi' },
+      { label: 'Saya ingin bicara langsung dengan CS pendaftaran.', desc: 'Menguji pembuatan tiket transfer eskalasi' },
+      { label: 'Apakah ada kuota beasiswa luar negeri dan asrama VIP?', desc: 'Menguji perilaku saat pertanyaan di luar profil (fallback)' },
+    ];
+  }, [isRetail, isProperty, isService]);
 
   // Muat konfigurasi chatbot tersimpan berdasarkan ID organisasi secara asynchronous
   useEffect(() => {
@@ -250,10 +385,60 @@ export function ChatbotView({
         escalation,
       });
 
+      // Simpan perubahan basis pengetahuan (profil organisasi) ke Supabase jika tersedia
+      if (supabase && organizationId) {
+        try {
+          await supabase
+            .from('organization_profiles')
+            .upsert({
+              organization_id: organizationId,
+              org_name: profile.orgName.trim(),
+              official_description: profile.officialDescription.trim(),
+              student_count: profile.studentCount.trim(),
+              staff_count: profile.staffCount.trim(),
+              address: profile.address.trim(),
+              maps_url: profile.mapsUrl.trim(),
+              registration_url: profile.registrationUrl.trim(),
+              cs_hours: profile.csHours.trim(),
+              tuition_info: profile.tuitionInfo.trim(),
+              admission_schedule: profile.admissionSchedule.trim(),
+              facilities: profile.facilities.trim(),
+              escalation_phone: profile.escalationPhone.trim(),
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'organization_id' });
+        } catch (dbErr) {
+          console.warn('[ChatbotView] Sinkronisasi ke tabel organization_profiles Supabase (non-fatal):', dbErr);
+        }
+      }
+
+      setProfile(profile);
+
+      // Sinkronkan data profil terbaru ke Worker WhatsApp (fire-and-forget)
+      syncProfileToWorker(profile).catch((workerErr) => {
+        console.warn('[ChatbotView] Sinkronisasi ke WhatsApp Worker (non-fatal):', workerErr);
+      });
+
       setFeedbackMsg({
         type: 'success',
         text: `Pengaturan Chatbot AI berhasil disimpan untuk organisasi ${profile.orgName}. Konfigurasi aktif!`,
       });
+
+      if (organizationId && currentUserId) {
+        notifyChatbotEvent({
+          organizationId,
+          userId: currentUserId,
+          action: isEnabled ? 'enabled' : 'disabled',
+          orgName: profile.orgName,
+        }).catch((e) => console.warn('[ChatbotView] Gagal membuat notifikasi chatbot status:', e));
+
+        notifyChatbotEvent({
+          organizationId,
+          userId: currentUserId,
+          action: 'rules_updated',
+          orgName: profile.orgName,
+          detail: `Knowledge base, FAQ, dan aturan eskalasi CS untuk "${profile.orgName}" berhasil disimpan.`,
+        }).catch((e) => console.warn('[ChatbotView] Gagal membuat notifikasi chatbot rules:', e));
+      }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'Terjadi kesalahan sistem';
       setFeedbackMsg({
@@ -406,44 +591,13 @@ export function ChatbotView({
     ]);
   };
 
-  // Salin Payload Preview
-  const handleCopyPayload = () => {
-    setCopiedPayload(true);
-    setTimeout(() => setCopiedPayload(false), 2500);
-  };
-
-  // Payload Preview JSON Object
-  const samplePayloadPreview = useMemo(() => ({
-    ticket_id: 'ESC-2026-9812',
-    customer_name: 'Ibu Rahmawati (Wali Calon Santri)',
-    phone_number: '+62 813-9876-5432',
-    channel: 'WhatsApp Business Cloud API',
-    destination_department:
-      escalation.destinationDepartment === 'psb'
-        ? 'CS Pendaftaran (PSB & Admisi)'
-        : escalation.destinationDepartment === 'finance'
-        ? 'CS Bagian Keuangan'
-        : escalation.destinationDepartment === 'supervisor'
-        ? 'Supervisor Pelayanan'
-        : escalation.destinationDepartment === 'admin'
-        ? 'Administrasi & IT'
-        : 'CS Layanan Umum & Humas',
-    last_user_query: 'Berapa biaya masuk asrama dan apakah ada beasiswa tahfidz?',
-    escalation_reason:
-      'Pertanyaan rincian biaya khusus & beasiswa belum terdaftar di basis pengetahuan resmi.',
-    escalated_at: '17 Okt 2026, 14:32 WIB',
-    conversation_status: 'Menunggu CS (Eskalasi Otomatis)',
-    lead_score: 'Tinggi (Potensi Pendaftar Santri Baru)',
-    strict_grounding_verified: rules.strictGrounding,
-  }), [escalation.destinationDepartment, rules.strictGrounding]);
-
   // Tampilan Empty State bila organisasi belum ada / belum dipilih
   if (!organizationId) {
     return (
       <View style={styles.pageContainer}>
         <View style={styles.emptyStateBox}>
           <View style={styles.emptyIconCircle}>
-            <AppIcon name="bot" size={28} color={COLORS.forestDark} />
+            <AppIcon name="bot" size={28} color={colors.textPrimary} />
           </View>
           <Text style={styles.emptyTitle}>Organisasi Belum Dipilih</Text>
           <Text style={styles.emptyDesc}>
@@ -464,14 +618,14 @@ export function ChatbotView({
   }
 
   return (
-    <View style={styles.pageContainer}>
+    <View style={[styles.pageContainer, { backgroundColor: colors.background }]}>
       {/* ========================================== */}
       {/* 1. HEADER HALAMAN & MASTER STATUS */}
       {/* ========================================== */}
-      <View style={styles.pageHeader}>
-        <View style={styles.headerLeft}>
+      <View style={[styles.pageHeader, !isDesktop && styles.pageHeaderMobile, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
+        <View style={[styles.headerLeft, !isDesktop && styles.headerLeftMobile]}>
           <View style={styles.headerTitleRow}>
-            <Text style={styles.headerTitle}>Chatbot AI</Text>
+            <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Chatbot AI</Text>
             <View
               style={[
                 styles.statusBadge,
@@ -504,47 +658,104 @@ export function ChatbotView({
               </Text>
             </View>
           </View>
-          <Text style={styles.headerSubtitle}>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
             Atur perilaku asisten otomatis WhatsApp, basis pengetahuan organisasi, aturan respon anti-halusinasi, dan alur eskalasi ke staf CS.
           </Text>
         </View>
 
         {/* Action Buttons & Master Toggle */}
-        <View style={styles.headerActions}>
-          {/* Toggle Switch Aktif/Nonaktif */}
-          <TouchableOpacity
-            style={[styles.masterToggleBtn, isEnabled ? styles.masterToggleActive : styles.masterToggleInactive]}
-            activeOpacity={0.8}
-            onPress={() => setIsEnabled(!isEnabled)}
-          >
-            <View style={[styles.toggleThumb, isEnabled ? styles.toggleThumbRight : styles.toggleThumbLeft]} />
-            <Text style={[styles.masterToggleLabel, isEnabled ? styles.masterToggleLabelActive : styles.masterToggleLabelInactive]}>
-              {isEnabled ? 'Bot Aktif' : 'Bot Nonaktif'}
-            </Text>
-          </TouchableOpacity>
+        <View style={[styles.headerActions, !isDesktop && styles.headerActionsMobile]}>
+          {!isDesktop ? (
+            <>
+              <View style={styles.headerActionsTopRowMobile}>
+                {/* Toggle Switch Aktif/Nonaktif */}
+                <TouchableOpacity
+                  style={[
+                    styles.masterToggleBtn,
+                    styles.masterToggleBtnMobile,
+                    isEnabled ? styles.masterToggleActive : styles.masterToggleInactive,
+                  ]}
+                  activeOpacity={0.8}
+                  onPress={() => setIsEnabled(!isEnabled)}
+                >
+                  <View style={[styles.toggleThumb, isEnabled ? styles.toggleThumbRight : styles.toggleThumbLeft]} />
+                  <Text
+                    style={[
+                      styles.masterToggleLabel,
+                      isEnabled ? styles.masterToggleLabelActive : styles.masterToggleLabelInactive,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {isEnabled ? 'Bot Aktif' : 'Bot Nonaktif'}
+                  </Text>
+                </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.secondaryHeaderBtn}
-            onPress={() => setActiveTab('simulator')}
-          >
-            <AppIcon name="bot" size={15} color={COLORS.forestDark} />
-            <Text style={styles.secondaryHeaderBtnText}>Uji Chatbot</Text>
-          </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.secondaryHeaderBtn, styles.secondaryHeaderBtnMobile]}
+                  onPress={() => setActiveTab('simulator')}
+                >
+                  <AppIcon name="bot" size={15} color={colors.textPrimary} />
+                  <Text style={styles.secondaryHeaderBtnText} numberOfLines={1}>Uji Chatbot</Text>
+                </TouchableOpacity>
+              </View>
 
-          <TouchableOpacity
-            style={[styles.primaryHeaderBtn, isSaving && { opacity: 0.7 }]}
-            onPress={handleSaveSettings}
-            disabled={isSaving}
-          >
-            {isSaving ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <AppIcon name="check" size={15} color="#FFFFFF" />
-            )}
-            <Text style={styles.primaryHeaderBtnText}>
-              {isSaving ? 'Menyimpan...' : 'Simpan Pengaturan'}
-            </Text>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.primaryHeaderBtn,
+                  styles.primaryHeaderBtnMobile,
+                  isSaving && { opacity: 0.7 },
+                ]}
+                onPress={handleSaveSettings}
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <AppIcon name="check" size={15} color="#FFFFFF" />
+                )}
+                <Text style={[styles.primaryHeaderBtnText, styles.primaryHeaderBtnTextMobile]} numberOfLines={1}>
+                  {isSaving ? 'Menyimpan...' : 'Simpan Pengaturan'}
+                </Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              {/* Toggle Switch Aktif/Nonaktif Desktop */}
+              <TouchableOpacity
+                style={[styles.masterToggleBtn, isEnabled ? styles.masterToggleActive : styles.masterToggleInactive]}
+                activeOpacity={0.8}
+                onPress={() => setIsEnabled(!isEnabled)}
+              >
+                <View style={[styles.toggleThumb, isEnabled ? styles.toggleThumbRight : styles.toggleThumbLeft]} />
+                <Text style={[styles.masterToggleLabel, isEnabled ? styles.masterToggleLabelActive : styles.masterToggleLabelInactive]}>
+                  {isEnabled ? 'Bot Aktif' : 'Bot Nonaktif'}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.secondaryHeaderBtn}
+                onPress={() => setActiveTab('simulator')}
+              >
+                <AppIcon name="bot" size={15} color={colors.textPrimary} />
+                <Text style={styles.secondaryHeaderBtnText}>Uji Chatbot</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.primaryHeaderBtn, isSaving && { opacity: 0.7 }]}
+                onPress={handleSaveSettings}
+                disabled={isSaving}
+              >
+                {isSaving ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <AppIcon name="check" size={15} color="#FFFFFF" />
+                )}
+                <Text style={styles.primaryHeaderBtnText}>
+                  {isSaving ? 'Menyimpan...' : 'Simpan Pengaturan'}
+                </Text>
+              </TouchableOpacity>
+            </>
+          )}
         </View>
       </View>
 
@@ -563,18 +774,18 @@ export function ChatbotView({
             size={16}
             color={
               feedbackMsg.type === 'success'
-                ? '#047857'
+                ? (colors.isDark ? '#34D399' : '#047857')
                 : feedbackMsg.type === 'error'
-                ? '#B91C1C'
-                : '#1D4ED8'
+                ? (colors.isDark ? '#F87171' : '#B91C1C')
+                : (colors.isDark ? '#60A5FA' : '#1D4ED8')
             }
           />
           <Text
             style={[
               styles.feedbackBannerText,
-              feedbackMsg.type === 'success' && { color: '#047857' },
-              feedbackMsg.type === 'error' && { color: '#B91C1C' },
-              feedbackMsg.type === 'info' && { color: '#1D4ED8' },
+              feedbackMsg.type === 'success' && { color: colors.isDark ? '#34D399' : '#047857' },
+              feedbackMsg.type === 'error' && { color: colors.isDark ? '#F87171' : '#B91C1C' },
+              feedbackMsg.type === 'info' && { color: colors.isDark ? '#60A5FA' : '#1D4ED8' },
             ]}
           >
             {feedbackMsg.text}
@@ -584,30 +795,38 @@ export function ChatbotView({
 
       {/* BANNER DISCLAIMER / STATUS ENGINE AI */}
       <View style={[styles.simulationNoticeCard, hasAiBackend && styles.aiNoticeCard]}>
-        <View style={[styles.noticeIconBox, hasAiBackend && { backgroundColor: '#F3E8FF' }]}>
-          <AppIcon name={hasAiBackend ? 'bot' : 'alert'} size={18} color={hasAiBackend ? '#7E22CE' : '#B45309'} />
+        <View style={[styles.noticeIconBox, hasAiBackend && { backgroundColor: colors.isDark ? 'rgba(168, 85, 247, 0.25)' : '#F3E8FF' }]}>
+          <AppIcon
+            name={hasAiBackend ? 'bot' : 'alert'}
+            size={18}
+            color={
+              hasAiBackend
+                ? (colors.isDark ? '#C084FC' : '#7E22CE')
+                : (colors.isDark ? '#FBBF24' : '#B45309')
+            }
+          />
         </View>
-        <View style={{ flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-            <Text style={[styles.noticeTitle, hasAiBackend && { color: '#6B21A8' }]}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+            <Text style={[styles.noticeTitle, hasAiBackend && { color: colors.isDark ? '#C084FC' : '#6B21A8' }]}>
               {hasAiBackend
                 ? 'Backend Supabase Edge Function & Gemini AI Aktif'
                 : 'Mode Simulasi Lokal (Prototipe AI Mandiri)'}
             </Text>
-            <View style={[styles.demoPill, hasAiBackend && { backgroundColor: '#E9D5FF' }]}>
-              <Text style={[styles.demoPillText, hasAiBackend && { color: '#7E22CE' }]}>
+            <View style={[styles.demoPill, hasAiBackend && { backgroundColor: colors.isDark ? 'rgba(168, 85, 247, 0.25)' : '#E9D5FF', borderColor: colors.isDark ? 'rgba(168, 85, 247, 0.45)' : '#C084FC' }]}>
+              <Text style={[styles.demoPillText, hasAiBackend && { color: colors.isDark ? '#E9D5FF' : '#7E22CE' }]}>
                 {hasAiBackend ? 'GEMINI LIVE' : 'SIMULASI'}
               </Text>
             </View>
           </View>
-          <Text style={[styles.noticeText, hasAiBackend && { color: '#581C87' }]}>
+          <Text style={[styles.noticeText, hasAiBackend && { color: colors.isDark ? '#E9D5FF' : '#581C87' }]}>
             {hasAiBackend
               ? 'Asisten WABiz terhubung ke backend Supabase Edge Function yang memproses query menggunakan Google Gemini API. Pengetahuan dijaga ketat oleh data resmi Profil Organisasi untuk mencegah halusinasi.'
               : 'Asisten WABiz saat ini berjalan dalam mode simulasi berbasis aturan lokal tanpa biaya API eksternal dan belum terhubung ke nomor WhatsApp nyata. Seluruh respon dijawab secara ketat (grounded) berdasarkan Profil Organisasi Anda untuk mencegah halusinasi data.'}
           </Text>
         </View>
         <TouchableOpacity style={styles.resetGhostBtn} onPress={handleResetDefault}>
-          <AppIcon name="refresh" size={13} color={COLORS.textSecondary} />
+          <AppIcon name="refresh" size={13} color={colors.textSecondary} />
           <Text style={styles.resetGhostBtnText}>Reset Preset</Text>
         </TouchableOpacity>
       </View>
@@ -616,87 +835,103 @@ export function ChatbotView({
       {/* 2. TAB NAVIGATOR */}
       {/* ========================================== */}
       <View style={styles.tabNavContainer}>
-        <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'profile' && styles.tabItemActive]}
-          onPress={() => setActiveTab('profile')}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabNavContent}
         >
-          <AppIcon
-            name="users"
-            size={15}
-            color={activeTab === 'profile' ? COLORS.emerald : COLORS.textSecondary}
-          />
-          <Text style={[styles.tabText, activeTab === 'profile' && styles.tabTextActive]}>
-            1. Profil Organisasi (Knowledge)
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'rules' && styles.tabItemActive]}
-          onPress={() => setActiveTab('rules')}
-        >
-          <AppIcon
-            name="settings"
-            size={15}
-            color={activeTab === 'rules' ? COLORS.emerald : COLORS.textSecondary}
-          />
-          <Text style={[styles.tabText, activeTab === 'rules' && styles.tabTextActive]}>
-            2. Aturan Respon & Sambutan
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'intent' && styles.tabItemActive]}
-          onPress={() => setActiveTab('intent')}
-        >
-          <AppIcon
-            name="campaign"
-            size={15}
-            color={activeTab === 'intent' ? COLORS.emerald : COLORS.textSecondary}
-          />
-          <Text style={[styles.tabText, activeTab === 'intent' && styles.tabTextActive]}>
-            3. Deteksi Minat Pendaftaran
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'escalation' && styles.tabItemActive]}
-          onPress={() => setActiveTab('escalation')}
-        >
-          <AppIcon
-            name="phone"
-            size={15}
-            color={activeTab === 'escalation' ? COLORS.emerald : COLORS.textSecondary}
-          />
-          <Text style={[styles.tabText, activeTab === 'escalation' && styles.tabTextActive]}>
-            4. Penerusan CS & Alur
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tabItem, activeTab === 'simulator' && styles.tabItemActive]}
-          onPress={() => setActiveTab('simulator')}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'profile' && styles.tabItemActive]}
+            onPress={() => setActiveTab('profile')}
+            accessibilityRole="tab"
+            accessibilityLabel="Tab Profil Organisasi"
+          >
             <AppIcon
-              name="chat"
+              name="users"
               size={15}
-              color={activeTab === 'simulator' ? COLORS.emerald : COLORS.textSecondary}
+              color={activeTab === 'profile' ? colors.accent : colors.textSecondary}
             />
-            <Text style={[styles.tabText, activeTab === 'simulator' && styles.tabTextActive]}>
-              5. Simulator Chat
+            <Text style={[styles.tabText, activeTab === 'profile' && styles.tabTextActive]}>
+              1. Profil Organisasi (Knowledge)
             </Text>
-            <View style={styles.tabBadgeLive}>
-              <Text style={styles.tabBadgeLiveText}>LIVE</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'rules' && styles.tabItemActive]}
+            onPress={() => setActiveTab('rules')}
+            accessibilityRole="tab"
+            accessibilityLabel="Tab Aturan Respon & Sambutan"
+          >
+            <AppIcon
+              name="settings"
+              size={15}
+              color={activeTab === 'rules' ? colors.accent : colors.textSecondary}
+            />
+            <Text style={[styles.tabText, activeTab === 'rules' && styles.tabTextActive]}>
+              2. Aturan Respon & Sambutan
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'intent' && styles.tabItemActive]}
+            onPress={() => setActiveTab('intent')}
+            accessibilityRole="tab"
+            accessibilityLabel="Tab Deteksi Minat Pendaftaran"
+          >
+            <AppIcon
+              name="campaign"
+              size={15}
+              color={activeTab === 'intent' ? colors.accent : colors.textSecondary}
+            />
+            <Text style={[styles.tabText, activeTab === 'intent' && styles.tabTextActive]}>
+              3. Deteksi Minat Pendaftaran
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'escalation' && styles.tabItemActive]}
+            onPress={() => setActiveTab('escalation')}
+            accessibilityRole="tab"
+            accessibilityLabel="Tab Penerusan CS & Alur"
+          >
+            <AppIcon
+              name="phone"
+              size={15}
+              color={activeTab === 'escalation' ? colors.accent : colors.textSecondary}
+            />
+            <Text style={[styles.tabText, activeTab === 'escalation' && styles.tabTextActive]}>
+              4. Penerusan CS & Alur
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.tabItem, activeTab === 'simulator' && styles.tabItemActive]}
+            onPress={() => setActiveTab('simulator')}
+            accessibilityRole="tab"
+            accessibilityLabel="Tab Simulator Chat"
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <AppIcon
+                name="chat"
+                size={15}
+                color={activeTab === 'simulator' ? colors.accent : colors.textSecondary}
+              />
+              <Text style={[styles.tabText, activeTab === 'simulator' && styles.tabTextActive]}>
+                5. Simulator Chat
+              </Text>
+              <View style={styles.tabBadgeLive}>
+                <Text style={styles.tabBadgeLiveText}>LIVE</Text>
+              </View>
             </View>
-          </View>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
 
       {/* ========================================== */}
       {/* 3. KONTEN TAB: PROFIL ORGANISASI */}
       {/* ========================================== */}
       {activeTab === 'profile' && (
-        <View style={styles.tabContentCard}>
+        <View style={[styles.tabContentCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
           <View style={styles.sectionTitleBlock}>
             <Text style={styles.sectionMainTitle}>Profil Resmi Lembaga & Basis Pengetahuan</Text>
             <Text style={styles.sectionSubtitle}>
@@ -715,7 +950,7 @@ export function ChatbotView({
                 value={profile.orgName}
                 onChangeText={(text) => setProfile({ ...profile, orgName: text })}
                 placeholder="Contoh: Pesantren Modern Darul Ulum WABiz"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
@@ -729,7 +964,7 @@ export function ChatbotView({
                 value={profile.officialDescription}
                 onChangeText={(text) => setProfile({ ...profile, officialDescription: text })}
                 placeholder="Jelaskan visi, fokus pendidikan, kurikulum, dan nilai utama lembaga..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 multiline
                 numberOfLines={3}
               />
@@ -738,27 +973,27 @@ export function ChatbotView({
               </Text>
             </View>
 
-            {/* Jumlah Santri / Siswa */}
+            {/* Kapasitas / Santri / Klien Aktif */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.inputLabel}>Jumlah Santri / Siswa Aktif</Text>
+              <Text style={styles.inputLabel}>{capacityLabel}</Text>
               <TextInput
                 style={styles.textInput}
                 value={profile.studentCount}
                 onChangeText={(text) => setProfile({ ...profile, studentCount: text })}
-                placeholder="Contoh: 1.250 Santri (Putra & Putri)"
-                placeholderTextColor={COLORS.textMuted}
+                placeholder={capacityPlaceholder}
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
-            {/* Tenaga Pengajar & Staf */}
+            {/* Tenaga Pengajar / Staf / Tim */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.inputLabel}>Jumlah Tenaga Pengajar & Asatidz</Text>
+              <Text style={styles.inputLabel}>{staffLabel}</Text>
               <TextInput
                 style={styles.textInput}
                 value={profile.staffCount}
                 onChangeText={(text) => setProfile({ ...profile, staffCount: text })}
-                placeholder="Contoh: 85 Asatidz & Staf Profesional"
-                placeholderTextColor={COLORS.textMuted}
+                placeholder={staffPlaceholder}
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
@@ -772,7 +1007,7 @@ export function ChatbotView({
                 value={profile.address}
                 onChangeText={(text) => setProfile({ ...profile, address: text })}
                 placeholder="Jalan, kelurahan, kecamatan, kota, provinsi, kode pos"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
@@ -784,7 +1019,7 @@ export function ChatbotView({
                 value={profile.mapsUrl}
                 onChangeText={(text) => setProfile({ ...profile, mapsUrl: text })}
                 placeholder="https://maps.google.com/?q=..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 autoCapitalize="none"
               />
               {!isMapsUrlValid && (
@@ -800,7 +1035,7 @@ export function ChatbotView({
                 value={profile.registrationUrl}
                 onChangeText={(text) => setProfile({ ...profile, registrationUrl: text })}
                 placeholder="https://psb.darululum-wabiz.sch.id"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 autoCapitalize="none"
               />
               {!isRegUrlValid && (
@@ -816,7 +1051,7 @@ export function ChatbotView({
                 value={profile.csHours}
                 onChangeText={(text) => setProfile({ ...profile, csHours: text })}
                 placeholder="Contoh: Senin - Sabtu: 08.00 - 16.00 WIB"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
@@ -828,7 +1063,7 @@ export function ChatbotView({
                 value={profile.escalationPhone}
                 onChangeText={(text) => setProfile({ ...profile, escalationPhone: text })}
                 placeholder="Contoh: +62 812-3456-7890"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
@@ -840,7 +1075,7 @@ export function ChatbotView({
                 value={profile.tuitionInfo}
                 onChangeText={(text) => setProfile({ ...profile, tuitionInfo: text })}
                 placeholder="Cantumkan biaya formulir pendaftaran, uang pangkal, atau arahan verifikasi langsung ke CS Keuangan..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 multiline
                 numberOfLines={2}
               />
@@ -857,7 +1092,7 @@ export function ChatbotView({
                 value={profile.admissionSchedule}
                 onChangeText={(text) => setProfile({ ...profile, admissionSchedule: text })}
                 placeholder="Gelombang 1: 1 Okt - 30 Nov 2026..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 multiline
                 numberOfLines={2}
               />
@@ -870,7 +1105,7 @@ export function ChatbotView({
                 value={profile.facilities}
                 onChangeText={(text) => setProfile({ ...profile, facilities: text })}
                 placeholder="Masjid 2 lantai, asrama ber-AC, lab komputer, poliklinik 24 jam..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 multiline
                 numberOfLines={2}
               />
@@ -878,9 +1113,9 @@ export function ChatbotView({
           </View>
 
           {/* Tombol Simpan Tab */}
-          <View style={styles.formFooterRow}>
+          <View style={[styles.formFooterRow, !isDesktop && styles.formFooterRowMobile]}>
             <TouchableOpacity
-              style={[styles.saveTabBtn, isSaving && { opacity: 0.7 }]}
+              style={[styles.saveTabBtn, !isDesktop && styles.saveTabBtnMobile, isSaving && { opacity: 0.7 }]}
               onPress={handleSaveSettings}
               disabled={isSaving}
             >
@@ -911,15 +1146,15 @@ export function ChatbotView({
 
           {/* PESAN SAMBUTAN OTOMATIS (WELCOME MESSAGE) */}
           <View style={styles.settingBlock}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <Text style={styles.settingBlockLabel}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
+              <Text style={[styles.settingBlockLabel, { flex: 1, minWidth: 200, flexShrink: 1 }]}>
                 Pesan Sambutan Otomatis (Welcome Message) <Text style={styles.requiredStar}>*</Text>
               </Text>
               <TouchableOpacity
                 style={styles.resetGhostBtn}
                 onPress={() => setWelcomeMessage(DEFAULT_WELCOME_MESSAGE)}
               >
-                <AppIcon name="refresh" size={12} color={COLORS.textSecondary} />
+                <AppIcon name="refresh" size={12} color={colors.textSecondary} />
                 <Text style={styles.resetGhostBtnText}>Preset Standar</Text>
               </TouchableOpacity>
             </View>
@@ -928,7 +1163,7 @@ export function ChatbotView({
               value={welcomeMessage}
               onChangeText={setWelcomeMessage}
               placeholder="Masukkan pesan sambutan pembuka otomatis saat kontak pertama kali menyapa..."
-              placeholderTextColor={COLORS.textMuted}
+              placeholderTextColor={colors.textPlaceholder}
               multiline
               numberOfLines={3}
             />
@@ -1070,9 +1305,9 @@ export function ChatbotView({
           <View style={styles.strictCard}>
             <View style={styles.strictCardHeader}>
               <View style={styles.shieldIconBox}>
-                <AppIcon name="check" size={16} color="#047857" />
+                <AppIcon name="check" size={16} color={colors.isDark ? colors.accent : '#047857'} />
               </View>
-              <View style={{ flex: 1 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={styles.strictTitle}>Mode Anti-Halusinasi WABiz (Strict Grounding)</Text>
                 <Text style={styles.strictSubtitle}>
                   Chatbot dilarang keras mengarang biaya, jadwal tes, kuota, atau janji penerimaan yang tidak tercantum di Profil Organisasi.
@@ -1103,9 +1338,9 @@ export function ChatbotView({
           </View>
 
           {/* Tombol Simpan Tab */}
-          <View style={styles.formFooterRow}>
+          <View style={[styles.formFooterRow, !isDesktop && styles.formFooterRowMobile]}>
             <TouchableOpacity
-              style={[styles.saveTabBtn, isSaving && { opacity: 0.7 }]}
+              style={[styles.saveTabBtn, !isDesktop && styles.saveTabBtnMobile, isSaving && { opacity: 0.7 }]}
               onPress={handleSaveSettings}
               disabled={isSaving}
             >
@@ -1136,7 +1371,7 @@ export function ChatbotView({
 
           {/* Toggle Utama Deteksi Niat */}
           <View style={styles.switchRowCard}>
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
               <Text style={styles.switchCardTitle}>Aktifkan Deteksi Niat Pendaftaran</Text>
               <Text style={styles.switchCardDesc}>
                 Pindai pesan masuk untuk mendeteksi intensi calon santri baru secara otomatis.
@@ -1150,13 +1385,59 @@ export function ChatbotView({
             </TouchableOpacity>
           </View>
 
-          {/* Kata Kunci Pemicu (Chips) */}
+          {/* Kata Kunci Pemicu (Chips & Input Manager) */}
           <View style={styles.settingBlock}>
-            <Text style={styles.settingBlockLabel}>Kata Kunci Pemicu Terdaftar (Intent Triggers)</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, flexWrap: 'wrap', gap: 8 }}>
+              <Text style={[styles.settingBlockLabel, { flex: 1, minWidth: 200, flexShrink: 1 }]}>
+                Kata Kunci Pemicu Terdaftar (Intent Triggers)
+              </Text>
+              <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12, backgroundColor: colors.accentSubtle, borderWidth: 1, borderColor: colors.accentBorder, flexShrink: 0 }}>
+                <Text style={{ fontSize: 11, fontWeight: '700', color: colors.accent }}>
+                  {intentRules.triggerKeywords.length} Kata Kunci
+                </Text>
+              </View>
+            </View>
+
+            {/* Input Tambah Kata Kunci */}
+            <View style={{ flexDirection: 'row', gap: 8, marginBottom: 10 }}>
+              <TextInput
+                style={[styles.textInput, { flex: 1, height: 38, paddingVertical: 6, fontSize: 13, backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.border }]}
+                placeholder="Tambah kata kunci pemicu baru (misal: 'info brosur', 'pendaftaran')..."
+                placeholderTextColor={colors.textPlaceholder}
+                value={newKeywordInput}
+                onChangeText={setNewKeywordInput}
+                onSubmitEditing={handleAddKeyword}
+                returnKeyType="done"
+              />
+              <TouchableOpacity
+                style={{
+                  backgroundColor: colors.accent,
+                  paddingHorizontal: 14,
+                  height: 38,
+                  borderRadius: 6,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+                onPress={handleAddKeyword}
+                activeOpacity={0.8}
+              >
+                <Text style={{ color: '#FFFFFF', fontSize: 12, fontWeight: '700' }}>+ Tambah</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Chips Kata Kunci Terdaftar */}
             <View style={styles.keywordChipsContainer}>
               {intentRules.triggerKeywords.map((kw, idx) => (
-                <View key={idx} style={styles.keywordChip}>
-                  <Text style={styles.keywordChipText}>&ldquo;{kw}&rdquo;</Text>
+                <View key={idx} style={[styles.keywordChip, { backgroundColor: isDark ? 'rgba(66, 191, 176, 0.12)' : '#E6F4F2', borderColor: isDark ? 'rgba(66, 191, 176, 0.3)' : '#BCE3DF' }]}>
+                  <Text style={[styles.keywordChipText, { color: colors.textPrimary }]}>&ldquo;{kw}&rdquo;</Text>
+                  <TouchableOpacity
+                    onPress={() => handleRemoveKeyword(kw)}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    style={{ marginLeft: 4 }}
+                    accessibilityLabel={`Hapus kata kunci ${kw}`}
+                  >
+                    <AppIcon name="close" size={11} color={colors.textSecondary} />
+                  </TouchableOpacity>
                 </View>
               ))}
             </View>
@@ -1188,7 +1469,7 @@ export function ChatbotView({
                 >
                   {intentRules.actionSendRegLink && <AppIcon name="check" size={12} color="#FFFFFF" />}
                 </View>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, minWidth: 0, flexShrink: 1 }}>
                   <Text style={styles.actionCheckboxTitle}>Kirimkan tautan formulir pendaftaran online resmi</Text>
                   <Text style={styles.actionCheckboxSubtitle}>
                     Menyertakan link {profile.registrationUrl || 'portal PSB'} langsung di pesan balasan.
@@ -1214,7 +1495,7 @@ export function ChatbotView({
                 >
                   {intentRules.actionOfferCS && <AppIcon name="check" size={12} color="#FFFFFF" />}
                 </View>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, minWidth: 0, flexShrink: 1 }}>
                   <Text style={styles.actionCheckboxTitle}>Tawarkan penerusan langsung ke Customer Service</Text>
                   <Text style={styles.actionCheckboxSubtitle}>
                     Memberikan opsi eskalasi satu klik ke panitia admisi bila calon pendaftar membutuhkan bantuan khusus.
@@ -1240,7 +1521,7 @@ export function ChatbotView({
                 >
                   {intentRules.actionTagLead && <AppIcon name="check" size={12} color="#FFFFFF" />}
                 </View>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, minWidth: 0, flexShrink: 1 }}>
                   <Text style={styles.actionCheckboxTitle}>{'Tandai percakapan sebagai "Calon Pendaftar Potensial"'}</Text>
                   <Text style={styles.actionCheckboxSubtitle}>
                     Menambahkan label hijau pada kotak masuk Percakapan agar diprioritaskan oleh tim CS.
@@ -1266,7 +1547,7 @@ export function ChatbotView({
                 >
                   {intentRules.actionNotifyAdmin && <AppIcon name="check" size={12} color="#FFFFFF" />}
                 </View>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, minWidth: 0, flexShrink: 1 }}>
                   <Text style={styles.actionCheckboxTitle}>Kirim ringkasan lead ke dashboard admin WABiz</Text>
                   <Text style={styles.actionCheckboxSubtitle}>
                     Memperbarui metrik calon santri masuk pada layar Dashboard secara real-time.
@@ -1277,9 +1558,9 @@ export function ChatbotView({
           </View>
 
           {/* Tombol Simpan Tab */}
-          <View style={styles.formFooterRow}>
+          <View style={[styles.formFooterRow, !isDesktop && styles.formFooterRowMobile]}>
             <TouchableOpacity
-              style={[styles.saveTabBtn, isSaving && { opacity: 0.7 }]}
+              style={[styles.saveTabBtn, !isDesktop && styles.saveTabBtnMobile, isSaving && { opacity: 0.7 }]}
               onPress={handleSaveSettings}
               disabled={isSaving}
             >
@@ -1310,7 +1591,7 @@ export function ChatbotView({
 
           {/* Switch Penerusan CS */}
           <View style={styles.switchRowCard}>
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
               <Text style={styles.switchCardTitle}>Aktifkan Alur Penerusan ke Tim CS</Text>
               <Text style={styles.switchCardDesc}>
                 Izinkan bot mentransfer percakapan langsung ke staf CS saat bot tidak dapat menjawab atau diminta oleh pengguna.
@@ -1382,71 +1663,10 @@ export function ChatbotView({
             </View>
           </View>
 
-          {/* PREVIEW RINGKASAN INFORMASI YANG DITERUSKAN */}
-          <View style={styles.settingBlock}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-              <Text style={styles.settingBlockLabel}>
-                Pratinjau Paket Data yang Diteruskan ke CS (Payload Summary)
-              </Text>
-              <TouchableOpacity style={styles.copyPayloadBtn} onPress={handleCopyPayload}>
-                <AppIcon name="copy" size={13} color={COLORS.forestDark} />
-                <Text style={styles.copyPayloadBtnText}>
-                  {copiedPayload ? 'Tersalin!' : 'Salin Contoh'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <Text style={styles.helperText}>
-              Ketika tiket eskalasi dibuat, sistem WABiz merangkum poin-poin berikut agar staf CS langsung mengetahui konteks tanpa membaca ulang seluruh riwayat chat.
-            </Text>
-
-            <View style={styles.payloadPreviewCard}>
-              <View style={styles.payloadHeader}>
-                <View style={styles.ticketBadge}>
-                  <Text style={styles.ticketBadgeText}>{samplePayloadPreview.ticket_id}</Text>
-                </View>
-                <View style={styles.waitingPill}>
-                  <View style={styles.waitingDot} />
-                  <Text style={styles.waitingPillText}>{samplePayloadPreview.conversation_status}</Text>
-                </View>
-              </View>
-
-              <View style={styles.payloadGrid}>
-                <View style={styles.payloadItem}>
-                  <Text style={styles.payloadItemLabel}>Nama & Kontak Penanya</Text>
-                  <Text style={styles.payloadItemVal}>{samplePayloadPreview.customer_name}</Text>
-                  <Text style={styles.payloadItemSub}>{samplePayloadPreview.phone_number}</Text>
-                </View>
-                <View style={styles.payloadItem}>
-                  <Text style={styles.payloadItemLabel}>Departemen Tujuan</Text>
-                  <Text style={styles.payloadItemVal}>{samplePayloadPreview.destination_department}</Text>
-                  <Text style={styles.payloadItemSub}>{samplePayloadPreview.channel}</Text>
-                </View>
-                <View style={styles.payloadItemFull}>
-                  <Text style={styles.payloadItemLabel}>Pertanyaan Terakhir Penanya</Text>
-                  <Text style={styles.payloadItemVal}>&ldquo;{samplePayloadPreview.last_user_query}&rdquo;</Text>
-                </View>
-                <View style={styles.payloadItemFull}>
-                  <Text style={styles.payloadItemLabel}>Alasan Eskalasi Otomatis</Text>
-                  <Text style={styles.payloadItemReason}>{samplePayloadPreview.escalation_reason}</Text>
-                </View>
-                <View style={styles.payloadItem}>
-                  <Text style={styles.payloadItemLabel}>Waktu Eskalasi</Text>
-                  <Text style={styles.payloadItemVal}>{samplePayloadPreview.escalated_at}</Text>
-                </View>
-                <View style={styles.payloadItem}>
-                  <Text style={styles.payloadItemLabel}>Status Prospek / Lead</Text>
-                  <Text style={[styles.payloadItemVal, { color: '#047857', fontWeight: '700' }]}>
-                    {samplePayloadPreview.lead_score}
-                  </Text>
-                </View>
-              </View>
-            </View>
-          </View>
-
           {/* Tombol Simpan Tab */}
-          <View style={styles.formFooterRow}>
+          <View style={[styles.formFooterRow, !isDesktop && styles.formFooterRowMobile]}>
             <TouchableOpacity
-              style={[styles.saveTabBtn, isSaving && { opacity: 0.7 }]}
+              style={[styles.saveTabBtn, !isDesktop && styles.saveTabBtnMobile, isSaving && { opacity: 0.7 }]}
               onPress={handleSaveSettings}
               disabled={isSaving}
             >
@@ -1472,7 +1692,7 @@ export function ChatbotView({
           <View style={isDesktop ? styles.simulatorLeftPanel : styles.simulatorLeftPanelMobile}>
             <View style={styles.simCardHeader}>
               <View style={styles.simHeaderIcon}>
-                <AppIcon name="bot" size={16} color={COLORS.forestDark} />
+                <AppIcon name="bot" size={16} color={colors.textPrimary} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.simPanelTitle}>Uji Skenario Interaktif</Text>
@@ -1483,7 +1703,7 @@ export function ChatbotView({
             </View>
 
             {/* STATUS RINGKASAN PROFIL */}
-            <View style={styles.simStatusBox}>
+            <View style={[styles.simStatusBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
               <View style={styles.simStatusRow}>
                 <Text style={styles.simStatusKey}>Lembaga:</Text>
                 <Text style={styles.simStatusVal} numberOfLines={1}>
@@ -1498,7 +1718,7 @@ export function ChatbotView({
               </View>
               <View style={styles.simStatusRow}>
                 <Text style={styles.simStatusKey}>Anti-Halusinasi:</Text>
-                <Text style={[styles.simStatusVal, { color: '#047857', fontWeight: '700' }]}>
+                <Text style={[styles.simStatusVal, { color: colors.isDark ? '#34D399' : '#047857', fontWeight: '700' }]}>
                   {rules.strictGrounding ? 'AKTIF (Grounded)' : 'NONAKTIF'}
                 </Text>
               </View>
@@ -1513,43 +1733,14 @@ export function ChatbotView({
             {/* CHIPS PERTANYAAN CEPAT */}
             <Text style={styles.quickPromptLabel}>Pilih Pertanyaan Uji Coba Cepat:</Text>
             <View style={styles.quickPromptGrid}>
-              {[
-                {
-                  label: 'Bagaimana cara mendaftar santri baru?',
-                  desc: 'Menguji deteksi niat pendaftaran & tautan portal PSB',
-                },
-                {
-                  label: 'Di mana alamat lengkap lembaga & Google Maps?',
-                  desc: 'Menguji rujukan alamat & link maps resmi',
-                },
-                {
-                  label: 'Berapa biaya pendaftaran & uang pangkal?',
-                  desc: 'Menguji kepatuhan anti-halusinasi biaya',
-                },
-                {
-                  label: 'Berapa jumlah santri dan tenaga pengajar?',
-                  desc: 'Menguji penyajian statistik resmi',
-                },
-                {
-                  label: 'Kapan jam operasional dan kontak CS resmi?',
-                  desc: 'Menguji informasi jam kerja & no WA eskalasi',
-                },
-                {
-                  label: 'Saya ingin bicara langsung dengan CS pendaftaran.',
-                  desc: 'Menguji pembuatan tiket transfer eskalasi',
-                },
-                {
-                  label: 'Apakah ada kuota beasiswa luar negeri dan asrama VIP?',
-                  desc: 'Menguji perilaku saat pertanyaan di luar profil (fallback)',
-                },
-              ].map((item, idx) => (
+              {quickPrompts.map((item, idx) => (
                 <TouchableOpacity
                   key={idx}
                   style={styles.quickPromptCard}
                   onPress={() => handleSendSimulatorMessage(item.label)}
                 >
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
-                    <AppIcon name="chat" size={13} color={COLORS.emerald} />
+                    <AppIcon name="chat" size={13} color={colors.accent} />
                     <Text style={styles.quickPromptTitle}>{item.label}</Text>
                   </View>
                   <Text style={styles.quickPromptSub}>{item.desc}</Text>
@@ -1565,16 +1756,18 @@ export function ChatbotView({
               <View style={styles.chatAvatar}>
                 <AppIcon name="bot" size={18} color="#FFFFFF" />
               </View>
-              <View style={{ flex: 1 }}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={styles.chatBotName}>{profile.orgName || 'WABiz AI Assistant'}</Text>
+              <View style={{ flex: 1, minWidth: 0, marginRight: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <Text style={styles.chatBotName} numberOfLines={1} ellipsizeMode="tail">
+                    {profile.orgName || 'WABiz AI Assistant'}
+                  </Text>
                   <View style={[styles.waVerifiedPill, hasAiBackend && { backgroundColor: '#A855F7' }]}>
                     <Text style={[styles.waVerifiedText, hasAiBackend && { color: '#FFFFFF' }]}>
                       {hasAiBackend ? 'GEMINI AI' : 'SIMULASI'}
                     </Text>
                   </View>
                 </View>
-                <Text style={styles.chatBotStatus}>
+                <Text style={styles.chatBotStatus} numberOfLines={1} ellipsizeMode="tail">
                   {isEnabled
                     ? hasAiBackend
                       ? '● Aktif (Gemini AI Cloud Terkoneksi)'
@@ -1584,8 +1777,8 @@ export function ChatbotView({
               </View>
 
               <TouchableOpacity style={styles.chatResetBtn} onPress={handleClearSimulator}>
-                <AppIcon name="refresh" size={14} color={COLORS.textSecondary} />
-                <Text style={styles.chatResetBtnText}>Reset Chat</Text>
+                <AppIcon name="refresh" size={13} color="#FFFFFF" />
+                <Text style={styles.chatResetBtnText}>Reset</Text>
               </TouchableOpacity>
             </View>
 
@@ -1623,13 +1816,13 @@ export function ChatbotView({
                       {/* Badge Lead atau Eskalasi */}
                       {!isUser && m.isEscalated && (
                         <View style={styles.bubbleEscalatedBadge}>
-                          <AppIcon name="phone" size={11} color="#B45309" />
+                          <AppIcon name="phone" size={11} color={colors.isDark ? '#FBBF24' : '#B45309'} />
                           <Text style={styles.bubbleEscalatedText}>KONTAK ESKALASI CS</Text>
                         </View>
                       )}
                       {!isUser && m.leadTagged && (
                         <View style={styles.bubbleLeadBadge}>
-                          <AppIcon name="check" size={11} color="#047857" />
+                          <AppIcon name="check" size={11} color={colors.isDark ? '#34D399' : '#047857'} />
                           <Text style={styles.bubbleLeadText}>CALON PENDAFTAR POTENSIAL</Text>
                         </View>
                       )}
@@ -1652,7 +1845,7 @@ export function ChatbotView({
                                 }
                               }}
                             >
-                              <AppIcon name="link" size={12} color={COLORS.emerald} />
+                              <AppIcon name="link" size={12} color={colors.accent} />
                               <Text style={styles.chatLinkText} numberOfLines={1}>
                                 {link.label} ↗
                               </Text>
@@ -1700,8 +1893,8 @@ export function ChatbotView({
                       { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8 },
                     ]}
                   >
-                    <ActivityIndicator size="small" color={COLORS.emerald} />
-                    <Text style={{ fontSize: 11, color: COLORS.textSecondary, fontStyle: 'italic' }}>
+                    <ActivityIndicator size="small" color={colors.accent} />
+                    <Text style={{ fontSize: 11, color: colors.isDark ? '#8696A0' : colors.textSecondary, fontStyle: 'italic' }}>
                       Asisten memproses respon simulasi...
                     </Text>
                   </View>
@@ -1716,7 +1909,7 @@ export function ChatbotView({
                 value={simulatorInput}
                 onChangeText={setSimulatorInput}
                 placeholder="Ketik pertanyaan uji coba (contoh: 'Berapa biaya pendaftaran?')..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 onSubmitEditing={() => handleSendSimulatorMessage()}
               />
               <TouchableOpacity
@@ -1740,7 +1933,7 @@ export function ChatbotView({
 // ==========================================
 // STYLESHEET B2B SAAS PROFESIONAL
 // ==========================================
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemePalette) => StyleSheet.create({
   pageContainer: {
     flex: 1,
     gap: 16,
@@ -1748,10 +1941,10 @@ const styles = StyleSheet.create({
 
   // 0. LOADING & EMPTY STATES
   loadingContainer: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 48,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1760,14 +1953,14 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontWeight: '500',
   },
   emptyStateBox: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 48,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1778,7 +1971,7 @@ const styles = StyleSheet.create({
     width: 60,
     height: 60,
     borderRadius: 30,
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
@@ -1786,18 +1979,18 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   emptyDesc: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     maxWidth: 420,
     lineHeight: 19,
   },
   emptyBtn: {
     marginTop: 8,
-    backgroundColor: COLORS.forestDark,
+    backgroundColor: colors.accent,
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 6,
@@ -1810,42 +2003,74 @@ const styles = StyleSheet.create({
 
   // 1. HEADER
   pageHeader: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 8,
+    backgroundColor: colors.surfaceCard,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 20,
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 16,
+    ...Platform.select({
+      web: {
+        backgroundImage: 'linear-gradient(90deg, rgba(13, 148, 136, 0.04) 0%, rgba(37, 99, 235, 0.03) 50%, rgba(255, 255, 255, 0) 100%)',
+        boxShadow: '0 1px 3px 0 rgba(15, 23, 42, 0.05)',
+      },
+      default: {
+        elevation: 2,
+      },
+    }),
+  },
+  pageHeaderMobile: {
+    padding: 14,
+    gap: 12,
   },
   headerLeft: {
     flex: 1,
-    minWidth: 280,
+    minWidth: 240,
+  },
+  headerLeftMobile: {
+    minWidth: 0,
+    width: '100%',
   },
   headerTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     marginBottom: 4,
+    flexWrap: 'wrap',
   },
   headerTitle: {
     fontSize: 22,
+    lineHeight: 28,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   headerSubtitle: {
     fontSize: 13,
-    color: COLORS.textSecondary,
-    lineHeight: 18,
+    color: colors.textSecondary,
+    lineHeight: 18.5,
   },
   headerActions: {
     flexDirection: 'row',
     alignItems: 'center',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  headerActionsMobile: {
+    width: '100%',
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: 10,
+    marginTop: 4,
+  },
+  headerActionsTopRowMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
   },
   masterToggleBtn: {
     flexDirection: 'row',
@@ -1856,13 +2081,19 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     gap: 8,
   },
+  masterToggleBtnMobile: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+  },
   masterToggleActive: {
-    backgroundColor: COLORS.emeraldSubtle,
-    borderColor: COLORS.emeraldBorder,
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accentBorder,
   },
   masterToggleInactive: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#CBD5E1',
+    backgroundColor: colors.isDark ? colors.surfaceSecondary : '#F1F5F9',
+    borderColor: colors.border,
   },
   toggleThumb: {
     width: 14,
@@ -1870,50 +2101,70 @@ const styles = StyleSheet.create({
     borderRadius: 7,
   },
   toggleThumbRight: {
-    backgroundColor: COLORS.emerald,
+    backgroundColor: colors.accent,
   },
   toggleThumbLeft: {
-    backgroundColor: '#94A3B8',
+    backgroundColor: colors.isDark ? '#64748B' : '#94A3B8',
   },
   masterToggleLabel: {
     fontSize: 12,
     fontWeight: '700',
   },
   masterToggleLabelActive: {
-    color: COLORS.emerald,
+    color: colors.accent,
   },
   masterToggleLabelInactive: {
-    color: '#64748B',
+    color: colors.textSecondary,
   },
   secondaryHeaderBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 6,
   },
+  secondaryHeaderBtnMobile: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+  },
   secondaryHeaderBtnText: {
     fontSize: 13,
     fontWeight: '600',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   primaryHeaderBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: COLORS.emerald,
+    backgroundColor: colors.accent,
     paddingVertical: 8,
     paddingHorizontal: 16,
     borderRadius: 6,
+  },
+  primaryHeaderBtnMobile: {
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    minHeight: 42,
   },
   primaryHeaderBtnText: {
     fontSize: 13,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  primaryHeaderBtnTextMobile: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    textAlign: 'center',
+    letterSpacing: 0.2,
   },
 
   // STATUS BADGES
@@ -1927,16 +2178,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   statusBadgeReady: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
+    backgroundColor: colors.isDark ? 'rgba(16, 185, 129, 0.15)' : '#ECFDF5',
+    borderColor: colors.isDark ? 'rgba(16, 185, 129, 0.35)' : '#A7F3D0',
   },
   statusBadgeWarn: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
+    backgroundColor: colors.isDark ? 'rgba(245, 158, 11, 0.15)' : '#FFFBEB',
+    borderColor: colors.isDark ? 'rgba(245, 158, 11, 0.35)' : '#FDE68A',
   },
   statusBadgeDisabled: {
-    backgroundColor: '#F1F5F9',
-    borderColor: '#E2E8F0',
+    backgroundColor: colors.isDark ? 'rgba(148, 163, 184, 0.15)' : '#F1F5F9',
+    borderColor: colors.isDark ? 'rgba(148, 163, 184, 0.35)' : '#E2E8F0',
   },
   statusDot: {
     width: 6,
@@ -1944,26 +2195,26 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   statusDotReady: {
-    backgroundColor: '#10B981',
+    backgroundColor: colors.isDark ? '#34D399' : '#10B981',
   },
   statusDotWarn: {
-    backgroundColor: '#F59E0B',
+    backgroundColor: colors.isDark ? '#FBBF24' : '#F59E0B',
   },
   statusDotDisabled: {
-    backgroundColor: '#94A3B8',
+    backgroundColor: colors.isDark ? '#94A3B8' : '#64748B',
   },
   statusBadgeText: {
     fontSize: 11,
     fontWeight: '700',
   },
   statusBadgeTextReady: {
-    color: '#047857',
+    color: colors.isDark ? '#34D399' : '#047857',
   },
   statusBadgeTextWarn: {
-    color: '#B45309',
+    color: colors.isDark ? '#FBBF24' : '#B45309',
   },
   statusBadgeTextDisabled: {
-    color: '#64748B',
+    color: colors.isDark ? '#94A3B8' : '#64748B',
   },
 
   // FEEDBACK BANNER
@@ -1977,27 +2228,28 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   feedbackSuccess: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
+    backgroundColor: colors.isDark ? 'rgba(16, 185, 129, 0.15)' : '#ECFDF5',
+    borderColor: colors.isDark ? 'rgba(16, 185, 129, 0.35)' : '#A7F3D0',
   },
   feedbackError: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
+    backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2',
+    borderColor: colors.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FECACA',
   },
   feedbackInfo: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
+    backgroundColor: colors.isDark ? 'rgba(59, 130, 246, 0.15)' : '#EFF6FF',
+    borderColor: colors.isDark ? 'rgba(59, 130, 246, 0.35)' : '#BFDBFE',
   },
   feedbackBannerText: {
     fontSize: 13,
     fontWeight: '500',
     flex: 1,
+    color: colors.textPrimary,
   },
 
   // NOTICE CARD
   simulationNoticeCard: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
+    backgroundColor: colors.isDark ? 'rgba(245, 158, 11, 0.12)' : '#FFFBEB',
+    borderColor: colors.isDark ? 'rgba(245, 158, 11, 0.3)' : '#FDE68A',
     borderWidth: 1,
     borderRadius: 8,
     padding: 14,
@@ -2011,12 +2263,12 @@ const styles = StyleSheet.create({
   noticeTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#92400E',
+    color: colors.isDark ? '#FBBF24' : '#92400E',
   },
   demoPill: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.isDark ? 'rgba(245, 158, 11, 0.2)' : '#FEF3C7',
     borderWidth: 1,
-    borderColor: '#F59E0B',
+    borderColor: colors.isDark ? 'rgba(245, 158, 11, 0.4)' : '#F59E0B',
     borderRadius: 4,
     paddingHorizontal: 5,
     paddingVertical: 1,
@@ -2024,21 +2276,21 @@ const styles = StyleSheet.create({
   demoPillText: {
     fontSize: 9,
     fontWeight: '800',
-    color: '#B45309',
+    color: colors.isDark ? '#FCD34D' : '#B45309',
     letterSpacing: 0.5,
   },
   noticeText: {
     fontSize: 12,
-    color: '#78350F',
+    color: colors.isDark ? '#FDE68A' : '#78350F',
     lineHeight: 17,
   },
   resetGhostBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     paddingVertical: 5,
     paddingHorizontal: 10,
     borderRadius: 5,
@@ -2046,19 +2298,22 @@ const styles = StyleSheet.create({
   resetGhostBtnText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: colors.textPrimary,
   },
 
   // 2. TAB NAVIGATOR
   tabNavContainer: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 4,
+    borderColor: colors.border,
+    padding: 3,
+  },
+  tabNavContent: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 4,
+    alignItems: 'center',
+    padding: 2,
   },
   tabItem: {
     flexDirection: 'row',
@@ -2069,18 +2324,19 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   tabItemActive: {
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
   },
   tabText: {
     fontSize: 13,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   tabTextActive: {
-    color: COLORS.forestDark,
+    color: colors.accent,
+    fontWeight: '700',
   },
   tabBadgeLive: {
-    backgroundColor: COLORS.emerald,
+    backgroundColor: colors.accent,
     borderRadius: 4,
     paddingHorizontal: 4,
     paddingVertical: 1,
@@ -2093,28 +2349,30 @@ const styles = StyleSheet.create({
 
   // 3. TAB CONTENT CARD
   tabContentCard: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 8,
+    backgroundColor: colors.surfaceCard,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 20,
     gap: 20,
+    ...SHADOWS.card,
   },
   sectionTitleBlock: {
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
     paddingBottom: 12,
   },
   sectionMainTitle: {
-    fontSize: 16,
+    fontSize: 16.5,
+    lineHeight: 22,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 4,
   },
   sectionSubtitle: {
     fontSize: 13,
-    color: COLORS.textSecondary,
-    lineHeight: 18,
+    color: colors.textSecondary,
+    lineHeight: 18.5,
   },
 
   // FORM GRID
@@ -2132,56 +2390,74 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 5,
   },
   requiredStar: {
     color: '#DC2626',
   },
   textInput: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.inputBg,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.inputBorder,
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 9,
     fontSize: 13,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   textArea: {
     minHeight: 70,
     textAlignVertical: 'top',
   },
   inputInvalid: {
-    borderColor: '#EF4444',
-    backgroundColor: '#FEF2F2',
+    borderColor: colors.isDark ? '#F87171' : '#EF4444',
+    backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2',
   },
   helperText: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
     marginTop: 4,
     lineHeight: 15,
   },
   errorText: {
     fontSize: 11,
-    color: '#DC2626',
+    color: colors.isDark ? '#FCA5A5' : '#DC2626',
     marginTop: 4,
   },
   formFooterRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: colors.border,
     paddingTop: 16,
+  },
+  formFooterRowMobile: {
+    width: '100%',
+    justifyContent: 'center',
   },
   saveTabBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: COLORS.emerald,
+    backgroundColor: colors.accent,
     paddingVertical: 9,
     paddingHorizontal: 18,
     borderRadius: 6,
+  },
+  saveTabBtnMobile: {
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: 42,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
   },
   saveTabBtnText: {
     fontSize: 13,
@@ -2196,7 +2472,7 @@ const styles = StyleSheet.create({
   settingBlockLabel: {
     fontSize: 13,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   choiceRow: {
     flexDirection: 'row',
@@ -2205,17 +2481,17 @@ const styles = StyleSheet.create({
   },
   choiceCard: {
     flex: 1,
-    minWidth: 200,
-    backgroundColor: COLORS.surfaceMuted,
+    minWidth: 150,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 12,
     gap: 4,
   },
   choiceCardActive: {
-    borderColor: COLORS.emerald,
-    backgroundColor: COLORS.emeraldSubtle,
+    borderColor: colors.accent,
+    backgroundColor: colors.accentSubtle,
   },
   choiceHeader: {
     flexDirection: 'row',
@@ -2227,38 +2503,38 @@ const styles = StyleSheet.create({
     height: 14,
     borderRadius: 7,
     borderWidth: 1.5,
-    borderColor: COLORS.textSecondary,
+    borderColor: colors.borderStrong,
     justifyContent: 'center',
     alignItems: 'center',
   },
   choiceRadioActive: {
-    borderColor: COLORS.emerald,
+    borderColor: colors.accent,
   },
   choiceRadioInner: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: COLORS.emerald,
+    backgroundColor: colors.accent,
   },
   choiceTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   choiceTitleActive: {
-    color: COLORS.forestDark,
+    color: colors.accent,
   },
   choiceDesc: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 15,
   },
 
   // STRICT GROUNDING CARD
   strictCard: {
-    backgroundColor: '#F0FDF4',
+    backgroundColor: colors.isDark ? 'rgba(66, 191, 176, 0.1)' : '#F0FDF4',
     borderWidth: 1,
-    borderColor: '#BBF7D0',
+    borderColor: colors.isDark ? 'rgba(66, 191, 176, 0.3)' : '#BBF7D0',
     borderRadius: 8,
     padding: 14,
     gap: 10,
@@ -2272,27 +2548,27 @@ const styles = StyleSheet.create({
     width: 28,
     height: 28,
     borderRadius: 6,
-    backgroundColor: '#DCFCE7',
+    backgroundColor: colors.isDark ? 'rgba(66, 191, 176, 0.2)' : '#DCFCE7',
     justifyContent: 'center',
     alignItems: 'center',
   },
   strictTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#166534',
+    color: colors.isDark ? colors.textPrimary : '#166534',
   },
   strictSubtitle: {
     fontSize: 12,
-    color: '#15803D',
+    color: colors.isDark ? colors.textSecondary : '#15803D',
     lineHeight: 16,
   },
   strictRuleList: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.isDark ? colors.surfaceSecondary : '#FFFFFF',
     borderRadius: 6,
     padding: 10,
     gap: 6,
     borderWidth: 1,
-    borderColor: '#DCFCE7',
+    borderColor: colors.border,
   },
   strictRuleItem: {
     flexDirection: 'row',
@@ -2303,11 +2579,11 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: '#16A34A',
+    backgroundColor: colors.isDark ? colors.accent : '#16A34A',
   },
   strictRuleText: {
     fontSize: 11,
-    color: '#374151',
+    color: colors.isDark ? colors.textPrimary : '#374151',
     lineHeight: 15,
   },
 
@@ -2320,10 +2596,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   subToggleOn: {
-    backgroundColor: COLORS.emerald,
+    backgroundColor: colors.accent,
   },
   subToggleOff: {
-    backgroundColor: '#CBD5E1',
+    backgroundColor: colors.borderStrong,
   },
   subToggleThumb: {
     width: 16,
@@ -2343,20 +2619,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 14,
   },
   switchCardTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   switchCardDesc: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 16,
     marginTop: 2,
   },
@@ -2368,16 +2644,19 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   keywordChip: {
-    backgroundColor: '#F1F5F9',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.isDark ? 'rgba(66, 191, 176, 0.12)' : '#E6F4F2',
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.isDark ? 'rgba(66, 191, 176, 0.3)' : '#BCE3DF',
     borderRadius: 14,
     paddingVertical: 4,
     paddingHorizontal: 10,
+    gap: 4,
   },
   keywordChipText: {
     fontSize: 12,
-    color: '#334155',
+    color: colors.textPrimary,
     fontWeight: '600',
   },
 
@@ -2389,9 +2668,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     padding: 12,
   },
@@ -2400,120 +2679,26 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 4,
     borderWidth: 1.5,
-    borderColor: COLORS.textSecondary,
+    borderColor: colors.borderStrong,
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 1,
   },
   checkboxBoxChecked: {
-    backgroundColor: COLORS.emerald,
-    borderColor: COLORS.emerald,
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
   },
   actionCheckboxTitle: {
     fontSize: 13,
+    lineHeight: 18,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   actionCheckboxSubtitle: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
+    fontSize: 11.5,
+    lineHeight: 16,
+    color: colors.textSecondary,
     marginTop: 2,
-  },
-
-  // PAYLOAD PREVIEW
-  copyPayloadBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    backgroundColor: COLORS.emeraldSubtle,
-    borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
-    paddingVertical: 3,
-    paddingHorizontal: 8,
-    borderRadius: 4,
-  },
-  copyPayloadBtnText: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: COLORS.forestDark,
-  },
-  payloadPreviewCard: {
-    backgroundColor: '#0F172A',
-    borderRadius: 8,
-    padding: 16,
-    gap: 12,
-  },
-  payloadHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1E293B',
-    paddingBottom: 10,
-  },
-  ticketBadge: {
-    backgroundColor: '#1E293B',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
-  },
-  ticketBadgeText: {
-    color: '#38BDF8',
-    fontSize: 11,
-    fontWeight: '700',
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-  },
-  waitingPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: 'rgba(245, 158, 11, 0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 12,
-  },
-  waitingDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#F59E0B',
-  },
-  waitingPillText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#FCD34D',
-  },
-  payloadGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  payloadItem: {
-    width: '47%',
-  },
-  payloadItemFull: {
-    width: '100%',
-  },
-  payloadItemLabel: {
-    fontSize: 10,
-    color: '#94A3B8',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  payloadItemVal: {
-    fontSize: 12,
-    color: '#F8FAFC',
-    fontWeight: '600',
-  },
-  payloadItemSub: {
-    fontSize: 11,
-    color: '#64748B',
-  },
-  payloadItemReason: {
-    fontSize: 12,
-    color: '#FCD34D',
-    fontStyle: 'italic',
   },
 
   // 7. SIMULATOR LAYOUT
@@ -2525,55 +2710,63 @@ const styles = StyleSheet.create({
   simulatorLeftPanel: {
     flex: 1,
     minWidth: 320,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
+    borderColor: colors.border,
+    borderRadius: 12,
     padding: 18,
     gap: 14,
+    ...SHADOWS.cardElevated,
+    ...Platform.select({
+      web: {
+        backgroundImage: 'radial-gradient(400px circle at 0% 0%, rgba(13, 148, 136, 0.04) 0%, rgba(255, 255, 255, 0) 100%)',
+      },
+      default: {},
+    }),
   },
   simulatorLeftPanelMobile: {
     width: '100%',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
+    borderColor: colors.border,
+    borderRadius: 12,
     padding: 16,
     gap: 14,
+    ...SHADOWS.cardElevated,
   },
   simCardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
     paddingBottom: 10,
   },
   simHeaderIcon: {
     width: 32,
     height: 32,
     borderRadius: 6,
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     justifyContent: 'center',
     alignItems: 'center',
   },
   simPanelTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   simPanelSub: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 15,
   },
   simStatusBox: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 6,
     padding: 10,
     gap: 6,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
   },
   simStatusRow: {
     flexDirection: 'row',
@@ -2582,38 +2775,38 @@ const styles = StyleSheet.create({
   },
   simStatusKey: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   simStatusVal: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     maxWidth: '65%',
   },
   quickPromptLabel: {
     fontSize: 12,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   quickPromptGrid: {
     gap: 6,
   },
   quickPromptCard: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     padding: 10,
   },
   quickPromptTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     flex: 1,
   },
   quickPromptSub: {
     fontSize: 10,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
 
   // SISI KANAN WHATSAPP CHAT
@@ -2621,34 +2814,38 @@ const styles = StyleSheet.create({
     flex: 1.3,
     minWidth: 360,
     height: 600,
-    backgroundColor: '#EFEAE2',
+    backgroundColor: colors.isDark ? '#0B141A' : '#EFEAE2',
     borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
+    borderColor: colors.isDark ? colors.border : '#CBD5E1',
+    borderRadius: 12,
     overflow: 'hidden',
+    ...SHADOWS.cardElevated,
   },
   simulatorRightPanelMobile: {
     width: '100%',
     height: 520,
-    backgroundColor: '#EFEAE2',
+    backgroundColor: colors.isDark ? '#0B141A' : '#EFEAE2',
     borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 8,
+    borderColor: colors.isDark ? colors.border : '#CBD5E1',
+    borderRadius: 12,
     overflow: 'hidden',
+    ...SHADOWS.cardElevated,
   },
   chatWindowHeader: {
-    backgroundColor: '#075E54',
+    backgroundColor: colors.isDark ? '#202C33' : '#075E54',
     paddingVertical: 10,
     paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+    borderBottomWidth: colors.isDark ? 1 : 0,
+    borderBottomColor: colors.isDark ? '#2A3942' : 'transparent',
   },
   chatAvatar: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#128C7E',
+    backgroundColor: colors.isDark ? '#00A884' : '#128C7E',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -2671,7 +2868,7 @@ const styles = StyleSheet.create({
   },
   chatBotStatus: {
     fontSize: 10,
-    color: '#D1E7DD',
+    color: colors.isDark ? '#8696A0' : '#D1E7DD',
   },
   chatResetBtn: {
     flexDirection: 'row',
@@ -2688,15 +2885,15 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   chatDisclaimerBanner: {
-    backgroundColor: '#FFF9C4',
+    backgroundColor: colors.isDark ? 'rgba(234, 179, 8, 0.15)' : '#FFF9C4',
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#FFF59D',
+    borderBottomColor: colors.isDark ? 'rgba(234, 179, 8, 0.25)' : '#FFF59D',
   },
   chatDisclaimerText: {
     fontSize: 10,
-    color: '#F57F17',
+    color: colors.isDark ? '#FDE047' : '#F57F17',
     textAlign: 'center',
     lineHeight: 14,
   },
@@ -2724,14 +2921,14 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 2,
   },
   chatBubbleBot: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.isDark ? '#202C33' : '#FFFFFF',
     borderTopLeftRadius: 2,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.isDark ? '#2A3942' : '#E2E8F0',
   },
   chatBubbleText: {
     fontSize: 12.5,
-    color: '#111827',
+    color: colors.isDark ? '#E9EDEF' : '#111B21',
     lineHeight: 18,
   },
   chatBubbleTextUser: {
@@ -2745,23 +2942,23 @@ const styles = StyleSheet.create({
   },
   chatTimeText: {
     fontSize: 9.5,
-    color: '#9CA3AF',
+    color: colors.isDark ? '#8696A0' : '#667781',
   },
   chatGroundingTag: {
     fontSize: 9,
-    color: COLORS.emerald,
+    color: colors.accent,
     fontWeight: '700',
   },
   aiNoticeCard: {
-    backgroundColor: '#FAF5FF',
-    borderColor: '#E9D5FF',
+    backgroundColor: colors.isDark ? 'rgba(168, 85, 247, 0.15)' : '#FAF5FF',
+    borderColor: colors.isDark ? 'rgba(168, 85, 247, 0.35)' : '#E9D5FF',
   },
   chatDisclaimerBannerAi: {
-    backgroundColor: '#F3E8FF',
-    borderBottomColor: '#E9D5FF',
+    backgroundColor: colors.isDark ? 'rgba(168, 85, 247, 0.2)' : '#F3E8FF',
+    borderBottomColor: colors.isDark ? 'rgba(168, 85, 247, 0.35)' : '#E9D5FF',
   },
   chatDisclaimerTextAi: {
-    color: '#6B21A8',
+    color: colors.isDark ? '#E9D5FF' : '#6B21A8',
   },
   bubbleSourceBadgeRow: {
     flexDirection: 'row',
@@ -2772,9 +2969,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#F3E8FF',
+    backgroundColor: colors.isDark ? 'rgba(168, 85, 247, 0.2)' : '#F3E8FF',
     borderWidth: 1,
-    borderColor: '#E9D5FF',
+    borderColor: colors.isDark ? 'rgba(168, 85, 247, 0.4)' : '#E9D5FF',
     borderRadius: 4,
     paddingHorizontal: 5,
     paddingVertical: 1.5,
@@ -2783,17 +2980,17 @@ const styles = StyleSheet.create({
     width: 5,
     height: 5,
     borderRadius: 2.5,
-    backgroundColor: '#7E22CE',
+    backgroundColor: colors.isDark ? '#C084FC' : '#7E22CE',
   },
   bubbleGeminiText: {
     fontSize: 8.5,
     fontWeight: '800',
-    color: '#7E22CE',
+    color: colors.isDark ? '#C084FC' : '#7E22CE',
   },
   bubbleLocalBadge: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.isDark ? '#111B21' : '#F1F5F9',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.isDark ? '#2A3942' : '#E2E8F0',
     borderRadius: 4,
     paddingHorizontal: 5,
     paddingVertical: 1.5,
@@ -2801,15 +2998,15 @@ const styles = StyleSheet.create({
   bubbleLocalText: {
     fontSize: 8.5,
     fontWeight: '700',
-    color: '#64748B',
+    color: colors.isDark ? '#8696A0' : '#64748B',
   },
   bubbleEscalatedBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.isDark ? 'rgba(245, 158, 11, 0.18)' : '#FEF3C7',
     borderWidth: 1,
-    borderColor: '#FDE68A',
+    borderColor: colors.isDark ? 'rgba(245, 158, 11, 0.4)' : '#FDE68A',
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -2818,15 +3015,15 @@ const styles = StyleSheet.create({
   bubbleEscalatedText: {
     fontSize: 9,
     fontWeight: '800',
-    color: '#B45309',
+    color: colors.isDark ? '#FBBF24' : '#B45309',
   },
   bubbleLeadBadge: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#DCFCE7',
+    backgroundColor: colors.isDark ? 'rgba(16, 185, 129, 0.18)' : '#DCFCE7',
     borderWidth: 1,
-    borderColor: '#BBF7D0',
+    borderColor: colors.isDark ? 'rgba(16, 185, 129, 0.4)' : '#BBF7D0',
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -2835,7 +3032,7 @@ const styles = StyleSheet.create({
   bubbleLeadText: {
     fontSize: 9,
     fontWeight: '800',
-    color: '#047857',
+    color: colors.isDark ? '#34D399' : '#047857',
   },
   chatLinksContainer: {
     gap: 4,
@@ -2845,37 +3042,43 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#F0FDF4',
+    backgroundColor: colors.isDark ? 'rgba(66, 191, 176, 0.15)' : '#F0FDF4',
     borderWidth: 1,
-    borderColor: '#DCFCE7',
+    borderColor: colors.isDark ? 'rgba(66, 191, 176, 0.35)' : '#DCFCE7',
     borderRadius: 4,
     padding: 6,
   },
   chatLinkText: {
     fontSize: 11,
-    color: COLORS.emerald,
+    color: colors.accent,
     fontWeight: '600',
     flex: 1,
   },
   chatInputBar: {
-    backgroundColor: '#F0F2F5',
+    backgroundColor: colors.isDark ? '#202C33' : '#F0F2F5',
     padding: 10,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     borderTopWidth: 1,
-    borderTopColor: '#E2E8F0',
+    borderTopColor: colors.isDark ? '#2A3942' : '#E2E8F0',
   },
   chatTextInput: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.isDark ? '#2A3942' : '#FFFFFF',
     borderRadius: 20,
     paddingHorizontal: 14,
     paddingVertical: 8,
     fontSize: 13,
-    color: COLORS.textDark,
+    color: colors.isDark ? '#E9EDEF' : '#111B21',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.isDark ? '#374248' : '#E2E8F0',
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   chatSendBtn: {
     width: 36,
@@ -2886,6 +3089,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   chatSendBtnDisabled: {
-    backgroundColor: '#94A3B8',
+    backgroundColor: colors.isDark ? '#374248' : '#94A3B8',
   },
 });

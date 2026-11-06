@@ -8,10 +8,14 @@ import {
   TextInput,
   Modal,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { COLORS, AppIcon } from '../theme';
+import { COLORS, AppIcon, SHADOWS, useTheme, ThemePalette } from '../theme';
 import { Contact, ContactLabel } from './ContactsView';
+import { getEffectiveContactLabels, getLabelColors } from '../lib/organizationTypes';
+import { formatErrorUserMessage } from '../lib/errorHandler';
+import { notifyCampaignEvent } from '../lib/notifications';
 import {
   createPersistentCampaignClient,
   cancelCampaignClient,
@@ -331,23 +335,7 @@ export function mapStatusToDb(status: CampaignStatus): string {
 
 // Terjemahan error Supabase ke pesan Bahasa Indonesia yang informatif
 export function translateCampaignError(errMsg: string): string {
-  const lower = errMsg.toLowerCase();
-  if (lower.includes('permission denied') || lower.includes('policy') || lower.includes('42501')) {
-    return 'Akses ditolak oleh kebijakan keamanan (RLS). Pastikan Anda adalah anggota organisasi yang berhak mengelola kampanye.';
-  }
-  if (lower.includes('violates check constraint') || lower.includes('23514')) {
-    return 'Nilai data kampanye atau format status tidak sesuai dengan batasan basis data.';
-  }
-  if (lower.includes('duplicate') || lower.includes('unique') || lower.includes('23505')) {
-    return 'Nama kampanye ini sudah terdaftar dalam organisasi Anda.';
-  }
-  if (lower.includes('foreign key') || lower.includes('violates foreign key')) {
-    return 'Organisasi tidak valid atau tidak ditemukan dalam database.';
-  }
-  if (lower.includes('network') || lower.includes('fetch') || lower.includes('connection')) {
-    return 'Gagal terhubung ke Supabase. Periksa koneksi internet Anda.';
-  }
-  return errMsg || 'Terjadi kendala saat memproses data kampanye.';
+  return formatErrorUserMessage(errMsg, { entityName: 'kampanye' });
 }
 
 
@@ -355,6 +343,8 @@ export function translateCampaignError(errMsg: string): string {
 // BADGE STATUS KAMPANYE
 // ==========================================
 export function CampaignStatusBadge({ status }: { status: CampaignStatus }) {
+  const { isDark, colors: themeColors } = useTheme();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   let bg = '#F1F5F9';
   let text = '#475569';
   let border = '#E2E8F0';
@@ -362,33 +352,33 @@ export function CampaignStatusBadge({ status }: { status: CampaignStatus }) {
 
   switch (status) {
     case 'Draft':
-      bg = '#F8FAFC';
-      text = '#64748B';
-      border = '#CBD5E1';
+      bg = isDark ? 'rgba(148, 163, 184, 0.12)' : '#F8FAFC';
+      text = isDark ? '#94A3B8' : '#64748B';
+      border = isDark ? 'rgba(148, 163, 184, 0.25)' : '#CBD5E1';
       dot = '#94A3B8';
       break;
     case 'Terjadwal':
-      bg = '#EFF6FF';
-      text = '#1D4ED8';
-      border = '#BFDBFE';
+      bg = isDark ? 'rgba(59, 130, 246, 0.12)' : '#EFF6FF';
+      text = isDark ? '#60A5FA' : '#1D4ED8';
+      border = isDark ? 'rgba(59, 130, 246, 0.25)' : '#BFDBFE';
       dot = '#3B82F6';
       break;
     case 'Berjalan':
-      bg = '#FFFBEB';
-      text = '#B45309';
-      border = '#FDE68A';
+      bg = isDark ? 'rgba(245, 158, 11, 0.12)' : '#FFFBEB';
+      text = isDark ? '#FCD34D' : '#B45309';
+      border = isDark ? 'rgba(245, 158, 11, 0.28)' : '#FDE68A';
       dot = '#F59E0B';
       break;
     case 'Selesai':
-      bg = '#ECFDF5';
-      text = '#047857';
-      border = '#A7F3D0';
+      bg = isDark ? 'rgba(16, 185, 129, 0.12)' : '#ECFDF5';
+      text = isDark ? '#6EE7B7' : '#047857';
+      border = isDark ? 'rgba(16, 185, 129, 0.28)' : '#A7F3D0';
       dot = '#10B981';
       break;
     case 'Dibatalkan':
-      bg = '#FEF2F2';
-      text = '#B91C1C';
-      border = '#FECACA';
+      bg = isDark ? 'rgba(239, 68, 68, 0.14)' : '#FEF2F2';
+      text = isDark ? '#FCA5A5' : '#B91C1C';
+      border = isDark ? 'rgba(239, 68, 68, 0.3)' : '#FECACA';
       dot = '#EF4444';
       break;
   }
@@ -405,48 +395,50 @@ export function CampaignStatusBadge({ status }: { status: CampaignStatus }) {
 // BADGE STATUS KESIAPAN GATEWAY WHATSAPP
 // ==========================================
 export function GatewayStatusBadge({ status }: { status: CampaignGatewayStatus | null }) {
+  const { colors: themeColors } = useTheme();
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
   if (!status) {
     return (
-      <View style={[styles.gwBadge, { backgroundColor: '#F1F5F9', borderColor: '#CBD5E1' }]}>
-        <Text style={[styles.gwBadgeText, { color: '#64748B' }]}>Memeriksa status gateway...</Text>
+      <View style={[styles.gwBadge, { backgroundColor: themeColors.surfaceSecondary, borderColor: themeColors.border }]}>
+        <Text style={[styles.gwBadgeText, { color: themeColors.textMuted }]}>Memeriksa status gateway...</Text>
       </View>
     );
   }
 
-  let bg = '#F8FAFC';
-  let border = '#E2E8F0';
-  let text = '#475569';
+  let bg = themeColors.surfaceSecondary;
+  let border = themeColors.border;
+  let text = themeColors.textSecondary;
   let iconName: any = 'help';
 
   switch (status.code) {
     case 'ready':
-      bg = '#ECFDF5';
-      border = '#A7F3D0';
-      text = '#047857';
+      bg = themeColors.successBg;
+      border = themeColors.successBorder;
+      text = themeColors.successText;
       iconName = 'check';
       break;
     case 'waiting_gateway':
-      bg = '#FFFBEB';
-      border = '#FDE68A';
-      text = '#B45309';
+      bg = themeColors.warningBg;
+      border = themeColors.warningBorder;
+      text = themeColors.warningText;
       iconName = 'clock';
       break;
     case 'unconfigured':
-      bg = '#FEF2F2';
-      border = '#FECACA';
-      text = '#DC2626';
+      bg = themeColors.dangerBg;
+      border = themeColors.dangerBorder;
+      text = themeColors.dangerText;
       iconName = 'alert';
       break;
     case 'unsupported':
-      bg = '#F1F5F9';
-      border = '#CBD5E1';
-      text = '#64748B';
+      bg = themeColors.surfaceSecondary;
+      border = themeColors.border;
+      text = themeColors.textMuted;
       iconName = 'close';
       break;
     case 'connection_error':
-      bg = '#FEF2F2';
-      border = '#FCA5A5';
-      text = '#B91C1C';
+      bg = themeColors.dangerBg;
+      border = themeColors.dangerBorder;
+      text = themeColors.dangerText;
       iconName = 'alert';
       break;
   }
@@ -471,17 +463,21 @@ export interface CampaignsViewProps {
   isDesktop?: boolean;
   onNavigate?: (page: 'dashboard' | 'chat' | 'users' | 'campaign' | 'bot' | 'team' | 'settings') => void;
   onCampaignUpdated?: () => void;
+  contactLabels?: string[];
+  institutionType?: string;
 }
 
 export function CampaignsView({
   organizationId,
-  currentUserId: _currentUserId,
+  currentUserId,
   campaigns: externalCampaigns,
   setCampaigns: externalSetCampaigns,
   contacts: externalContacts = [],
   isDesktop = true,
   onNavigate: _onNavigate,
   onCampaignUpdated,
+  contactLabels: _contactLabels,
+  institutionType: _institutionType,
 }: CampaignsViewProps) {
   const [internalCampaigns, setInternalCampaigns] = useState<Campaign[]>([]);
   const campaigns = externalCampaigns ?? internalCampaigns;
@@ -496,6 +492,16 @@ export function CampaignsView({
   // Role Pengguna Saat Ini dalam Organisasi
   const [userRole, setUserRole] = useState<'owner' | 'admin' | 'member' | string | null>(null);
   const isOwnerOrAdmin = userRole === 'owner' || userRole === 'admin' || userRole === null;
+
+  // Waktu saat ini yang disinkronkan setelah render (bebas efek samping compiler)
+  const [currentTimestamp, setCurrentTimestamp] = useState<number>(0);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setCurrentTimestamp(Date.now());
+    }, 0);
+    return () => clearTimeout(timer);
+  }, []);
 
   // Status Asinkron
   const [isLoading, setIsLoading] = useState<boolean>(Boolean(organizationId));
@@ -512,6 +518,9 @@ export function CampaignsView({
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const [campaignToCancel, setCampaignToCancel] = useState<Campaign | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [isRecipientsModalOpen, setIsRecipientsModalOpen] = useState(false);
   const [isContactPickerOpen, setIsContactPickerOpen] = useState(false);
@@ -533,7 +542,7 @@ export function CampaignsView({
   const [recipientStatusFilter, setRecipientStatusFilter] = useState<string>('all');
   const [calculatedScheduleIso, setCalculatedScheduleIso] = useState<string | null>(null);
   const [gatewayStatus, setGatewayStatus] = useState<CampaignGatewayStatus | null>(null);
-  const [isLoadingGatewayStatus, setIsLoadingGatewayStatus] = useState<boolean>(false);
+  const [, setIsLoadingGatewayStatus] = useState<boolean>(false);
 
   // Form Fields State
   const [formName, setFormName] = useState('');
@@ -544,7 +553,7 @@ export function CampaignsView({
   const [formScheduleDate, setFormScheduleDate] = useState('');
   const [formScheduleHour, setFormScheduleHour] = useState('09');
   const [formScheduleMinute, setFormScheduleMinute] = useState('00');
-  const [formScheduleTime, setFormScheduleTime] = useState('09:00');
+  const [, setFormScheduleTime] = useState('09:00');
   const [calendarMonth, setCalendarMonth] = useState<Date>(new Date());
   const [clockDialMode, setClockDialMode] = useState<'hour' | 'minute'>('hour');
   const [formError, setFormError] = useState<string | null>(null);
@@ -553,6 +562,28 @@ export function CampaignsView({
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
   const [contactSearch, setContactSearch] = useState('');
   const [contactLabelFilter, setContactLabelFilter] = useState<'Semua' | ContactLabel>('Semua');
+  const [isSegmentDropdownOpen, setIsSegmentDropdownOpen] = useState(false);
+
+  const effectiveLabels = useMemo(() => {
+    return getEffectiveContactLabels(_contactLabels, _institutionType);
+  }, [_contactLabels, _institutionType]);
+
+  const handleSelectSegment = (segment: 'all' | ContactLabel) => {
+    setFormSegment(segment);
+    setIsSegmentDropdownOpen(false);
+    if (segment === 'all') {
+      const allValid = contacts.filter((c) => isValidPhoneNumber(c.phone)).map((c) => c.id);
+      setSelectedContactIds(allValid);
+    } else {
+      const matching = contacts
+        .filter((c) => {
+          const hasLabel = (c.labels && c.labels.includes(segment)) || c.label === segment;
+          return hasLabel && isValidPhoneNumber(c.phone);
+        })
+        .map((c) => c.id);
+      setSelectedContactIds(matching);
+    }
+  };
 
   // Muat kontak otomatis dari Supabase jika belum tersedia di prop
   useEffect(() => {
@@ -603,7 +634,9 @@ export function CampaignsView({
 
   useEffect(() => {
     let ignore = false;
-    refreshGatewayStatus();
+    const timer = setTimeout(() => {
+      refreshGatewayStatus();
+    }, 0);
     getWhatsAppStatus()
       .then((res: any) => {
         if (!ignore && res.success && res.data?.phoneNumber) {
@@ -613,6 +646,7 @@ export function CampaignsView({
       .catch(() => {});
     return () => {
       ignore = true;
+      clearTimeout(timer);
     };
   }, [refreshGatewayStatus]);
 
@@ -895,7 +929,7 @@ export function CampaignsView({
     setFormDeliveryMode('now');
     setSelectedContactIds([]); // Kosongkan agar pengguna secara sadar memilih penerima
 
-    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const tomorrow = new Date((currentTimestamp || 1762300800000) + 24 * 60 * 60 * 1000);
     const tomorrowWib = parseWibDateTime(tomorrow.toISOString());
     if (tomorrowWib) {
       setFormScheduleDate(`${tomorrowWib.yyyy}-${tomorrowWib.mm}-${tomorrowWib.dd}`);
@@ -949,7 +983,7 @@ export function CampaignsView({
         setCalendarMonth(new Date(parseInt(wib.yyyy, 10), parseInt(wib.mm, 10) - 1, 1));
       }
     } else {
-      const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      const tomorrow = new Date((currentTimestamp || 1762300800000) + 24 * 60 * 60 * 1000);
       const tomorrowWib = parseWibDateTime(tomorrow.toISOString());
       if (tomorrowWib) {
         setFormScheduleDate(`${tomorrowWib.yyyy}-${tomorrowWib.mm}-${tomorrowWib.dd}`);
@@ -1084,6 +1118,16 @@ export function CampaignsView({
           text: `Kampanye "${formName.trim()}" berhasil diperbarui.`,
         });
         onCampaignUpdated?.();
+
+        if (effectiveOrgId && currentUserId) {
+          notifyCampaignEvent({
+            organizationId: effectiveOrgId,
+            userId: currentUserId,
+            campaignId: activeCampaign.id,
+            campaignName: formName.trim(),
+            mode: 'updated',
+          }).catch((e) => console.warn('[CampaignsView] Gagal membuat notifikasi update kampanye:', e));
+        }
       } else {
         const { data: newRow, error: insertError } = await supabase
           .from('campaigns')
@@ -1106,6 +1150,17 @@ export function CampaignsView({
         if (newRow) {
           fetchCampaigns();
           onCampaignUpdated?.();
+
+          if (effectiveOrgId && currentUserId) {
+            notifyCampaignEvent({
+              organizationId: effectiveOrgId,
+              userId: currentUserId,
+              campaignId: newRow.id,
+              campaignName: formName.trim(),
+              mode: 'draft',
+              recipientCount: selectedContactIds.length,
+            }).catch((e) => console.warn('[CampaignsView] Gagal membuat notifikasi draf kampanye:', e));
+          }
         }
 
         setFeedbackMsg({
@@ -1152,6 +1207,17 @@ export function CampaignsView({
         });
         fetchCampaigns();
         onCampaignUpdated?.();
+
+        if (effectiveOrgId && currentUserId) {
+          notifyCampaignEvent({
+            organizationId: effectiveOrgId,
+            userId: currentUserId,
+            campaignId: res.data.campaignId || `camp_${Date.now()}`,
+            campaignName: formName.trim(),
+            mode: formDeliveryMode === 'scheduled' ? 'scheduled' : 'queued',
+            recipientCount: res.data.validRecipients,
+          }).catch((e) => console.warn('[CampaignsView] Gagal membuat notifikasi eksekusi kampanye:', e));
+        }
       } else {
         setFormError(res.error || 'Gagal mendaftarkan kampanye ke antrean worker.');
         setIsReviewModalOpen(false);
@@ -1222,7 +1288,7 @@ export function CampaignsView({
             setRecipientMetrics(res.data.metrics);
           }
         }
-      } catch (err: any) {
+      } catch {
         // Abaikan error transient selama polling agar UI tidak terganggu
       } finally {
         isPollingRecipientsRef.current = false;
@@ -1258,46 +1324,82 @@ export function CampaignsView({
     recipientMetrics.processing,
   ]);
 
-  // Batalkan Jadwal Kampanye di Worker & Supabase
-  const handleCancelSchedule = async (camp: Campaign) => {
+  // Buka Modal Konfirmasi Pembatalan Siaran / Jadwal
+  const handleOpenCancelModal = (camp: Campaign) => {
     if (userRole === 'member') {
       setFeedbackMsg({
         type: 'warning',
-        text: 'Akses dibatasi: Hanya Owner atau Admin organisasi yang berhak membatalkan jadwal kampanye.',
+        text: 'Akses dibatasi: Hanya Owner atau Admin organisasi yang berhak membatalkan kampanye.',
       });
       setTimeout(() => setFeedbackMsg(null), 4000);
       return;
     }
-    if (!effectiveOrgId) return;
+    setCampaignToCancel(camp);
+    setIsCancelModalOpen(true);
+  };
 
+  // Konfirmasi Eksekusi Pembatalan Kampanye ke Worker & Supabase
+  const handleConfirmCancel = async () => {
+    if (userRole === 'member') {
+      setFeedbackMsg({
+        type: 'warning',
+        text: 'Akses dibatasi: Hanya Owner atau Admin organisasi yang berhak membatalkan kampanye.',
+      });
+      setIsCancelModalOpen(false);
+      setTimeout(() => setFeedbackMsg(null), 4000);
+      return;
+    }
+    if (!campaignToCancel || !effectiveOrgId || isCancelling) return;
+
+    setIsCancelling(true);
     try {
-      const res = await cancelCampaignClient(camp.id, effectiveOrgId);
+      const res = await cancelCampaignClient(campaignToCancel.id, effectiveOrgId);
       if (res.success) {
+        // HANYA perbarui status lokal setelah worker mengonfirmasi keberhasilan pembatalan
         setCampaigns((prev) =>
-          prev.map((c) => (c.id === camp.id ? { ...c, status: 'Dibatalkan' } : c))
+          prev.map((c) => (c.id === campaignToCancel.id ? { ...c, status: 'Dibatalkan' } : c))
         );
-        if (activeCampaign && activeCampaign.id === camp.id) {
+        if (activeCampaign && activeCampaign.id === campaignToCancel.id) {
           setActiveCampaign({ ...activeCampaign, status: 'Dibatalkan' });
         }
         setFeedbackMsg({
           type: 'info',
-          text: `Jadwal kampanye "${camp.name}" telah dibatalkan.`,
+          text:
+            res.message ||
+            `Siaran kampanye "${campaignToCancel.name}" berhasil dibatalkan. Seluruh sisa antrean pengiriman telah dihentikan.`,
         });
+        setIsCancelModalOpen(false);
+        setCampaignToCancel(null);
         onCampaignUpdated?.();
+
+        if (effectiveOrgId && currentUserId) {
+          notifyCampaignEvent({
+            organizationId: effectiveOrgId,
+            userId: currentUserId,
+            campaignId: campaignToCancel.id,
+            campaignName: campaignToCancel.name,
+            mode: 'cancelled',
+          }).catch((e) => console.warn('[CampaignsView] Gagal membuat notifikasi pembatalan kampanye:', e));
+        }
       } else {
+        // Worker gagal atau offline -> Tampilkan pesan error dan JANGAN ubah status secara palsu
         setFeedbackMsg({
           type: 'warning',
-          text: res.error || 'Gagal membatalkan jadwal kampanye.',
+          text: res.error || 'Gagal membatalkan siaran kampanye melalui worker.',
         });
+        setIsCancelModalOpen(false);
       }
-      setTimeout(() => setFeedbackMsg(null), 4000);
+      setTimeout(() => setFeedbackMsg(null), 5000);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
       setFeedbackMsg({
         type: 'warning',
         text: translateCampaignError(msg),
       });
-      setTimeout(() => setFeedbackMsg(null), 4000);
+      setIsCancelModalOpen(false);
+      setTimeout(() => setFeedbackMsg(null), 5000);
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -1316,7 +1418,7 @@ export function CampaignsView({
     setIsDeleteModalOpen(true);
   };
 
-  // Hapus Kampanye dari Database Supabase
+  // Hapus Kampanye: Membedakan draft (langsung Supabase) vs scheduled/running (worker)
   const handleConfirmDelete = async () => {
     if (userRole === 'member') {
       setFeedbackMsg({
@@ -1331,21 +1433,151 @@ export function CampaignsView({
 
     setIsDeleting(true);
     try {
-      const res = await deleteCampaignClient(activeCampaign.id, effectiveOrgId);
-      if (!res.success) {
-        setFeedbackMsg({
-          type: 'warning',
-          text: res.error || 'Gagal menghapus kampanye via backend worker.',
-        });
-      } else {
+      const campStatus = (activeCampaign.status || '').toLowerCase();
+
+      // JALUR 1: KAMPANYE DRAFT — Dihapus langsung melalui Supabase Client dengan RLS
+      if (campStatus === 'draft') {
+        const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
+        if (sessionErr || !sessionData?.session) {
+          setFeedbackMsg({
+            type: 'warning',
+            text: 'Sesi autentikasi telah berakhir. Silakan masuk kembali ke akun Anda.',
+          });
+          setIsDeleteModalOpen(false);
+          setIsDeleting(false);
+          setTimeout(() => setFeedbackMsg(null), 4000);
+          return;
+        }
+
+        const { error: delErr } = await supabase
+          .from('campaigns')
+          .delete()
+          .eq('id', activeCampaign.id)
+          .eq('organization_id', effectiveOrgId);
+
+        if (delErr) {
+          setFeedbackMsg({
+            type: 'warning',
+            text: translateCampaignError(delErr.message),
+          });
+          setIsDeleteModalOpen(false);
+          setIsDeleting(false);
+          setTimeout(() => setFeedbackMsg(null), 4000);
+          return;
+        }
+
+        // Sukses: Perbarui state lokal hanya setelah Supabase mengonfirmasi
         setCampaigns((prev) => prev.filter((c) => c.id !== activeCampaign.id));
         onCampaignUpdated?.();
+
+        if (effectiveOrgId && currentUserId) {
+          notifyCampaignEvent({
+            organizationId: effectiveOrgId,
+            userId: currentUserId,
+            campaignId: activeCampaign.id,
+            campaignName: activeCampaign.name,
+            mode: 'deleted',
+          }).catch((e) => console.warn('[CampaignsView] Gagal membuat notifikasi hapus kampanye:', e));
+        }
+
         setFeedbackMsg({
           type: 'success',
-          text: res.message || `Kampanye "${activeCampaign.name}" berhasil dihapus.`,
+          text: `Draf kampanye "${activeCampaign.name}" berhasil dihapus dari database.`,
         });
+        setIsDeleteModalOpen(false);
+        setActiveCampaign(null);
+        setTimeout(() => setFeedbackMsg(null), 4000);
+        return;
       }
 
+      // JALUR 2: KAMPANYE RUNNING — Dilarang dihapus langsung (wajib dibatalkan terlebih dahulu)
+      if (campStatus === 'berjalan' || campStatus === 'running' || campStatus === 'sending') {
+        setFeedbackMsg({
+          type: 'warning',
+          text: 'Kampanye sedang aktif berjalan ("running"). Batalkan siaran kampanye terlebih dahulu sebelum menghapus antrean.',
+        });
+        setIsDeleteModalOpen(false);
+        setTimeout(() => setFeedbackMsg(null), 4000);
+        return;
+      }
+
+      // JALUR 3: KAMPANYE TERJADWAL — Wajib melalui Worker untuk membersihkan antrean penjadwalan
+      if (campStatus === 'terjadwal' || campStatus === 'scheduled') {
+        const res = await deleteCampaignClient(activeCampaign.id, effectiveOrgId);
+        if (!res.success) {
+          setFeedbackMsg({
+            type: 'warning',
+            text: res.error || 'Gagal menghapus antrean kampanye terjadwal via worker.',
+          });
+        } else {
+          setCampaigns((prev) => prev.filter((c) => c.id !== activeCampaign.id));
+          onCampaignUpdated?.();
+
+          if (effectiveOrgId && currentUserId) {
+            notifyCampaignEvent({
+              organizationId: effectiveOrgId,
+              userId: currentUserId,
+              campaignId: activeCampaign.id,
+              campaignName: activeCampaign.name,
+              mode: 'deleted',
+            }).catch((e) => console.warn('[CampaignsView] Gagal membuat notifikasi hapus kampanye:', e));
+          }
+
+          setFeedbackMsg({
+            type: 'success',
+            text: res.message || `Kampanye terjadwal "${activeCampaign.name}" berhasil dibatalkan dan dihapus.`,
+          });
+          setIsDeleteModalOpen(false);
+          setActiveCampaign(null);
+        }
+        setTimeout(() => setFeedbackMsg(null), 4000);
+        return;
+      }
+
+      // JALUR 4: KAMPANYE SELESAI / DIBATALKAN / LAINNYA — Coba worker, fallback ke Supabase
+      let isCleanedOnWorker = false;
+      try {
+        const res = await deleteCampaignClient(activeCampaign.id, effectiveOrgId);
+        if (res.success) {
+          isCleanedOnWorker = true;
+        }
+      } catch {
+        // Worker mungkin offline
+      }
+
+      if (!isCleanedOnWorker) {
+        const { error: delSbErr } = await supabase
+          .from('campaigns')
+          .delete()
+          .eq('id', activeCampaign.id)
+          .eq('organization_id', effectiveOrgId);
+
+        if (delSbErr) {
+          setFeedbackMsg({
+            type: 'warning',
+            text: translateCampaignError(delSbErr.message),
+          });
+          setIsDeleteModalOpen(false);
+          return;
+        }
+      }
+
+      setCampaigns((prev) => prev.filter((c) => c.id !== activeCampaign.id));
+      onCampaignUpdated?.();
+
+      if (effectiveOrgId && currentUserId) {
+        notifyCampaignEvent({
+          organizationId: effectiveOrgId,
+          userId: currentUserId,
+          campaignId: activeCampaign.id,
+          campaignName: activeCampaign.name,
+          mode: 'deleted',
+        }).catch((e) => console.warn('[CampaignsView] Gagal membuat notifikasi hapus kampanye:', e));
+      }
+      setFeedbackMsg({
+        type: 'success',
+        text: `Kampanye "${activeCampaign.name}" berhasil dihapus dari database.`,
+      });
       setIsDeleteModalOpen(false);
       setActiveCampaign(null);
       setTimeout(() => setFeedbackMsg(null), 4000);
@@ -1355,6 +1587,7 @@ export function CampaignsView({
         type: 'warning',
         text: translateCampaignError(msg),
       });
+      setIsDeleteModalOpen(false);
       setTimeout(() => setFeedbackMsg(null), 4000);
     } finally {
       setIsDeleting(false);
@@ -1417,6 +1650,16 @@ export function CampaignsView({
           type: 'success',
           text: `Salinan draf kampanye "${copyName}" berhasil dibuat di database.`,
         });
+
+        if (effectiveOrgId && currentUserId) {
+          notifyCampaignEvent({
+            organizationId: effectiveOrgId,
+            userId: currentUserId,
+            campaignId: newRow.id,
+            campaignName: copyName,
+            mode: 'draft',
+          }).catch((e) => console.warn('[CampaignsView] Gagal membuat notifikasi duplikasi draf kampanye:', e));
+        }
       }
       setTimeout(() => setFeedbackMsg(null), 4000);
     } catch (err: unknown) {
@@ -1432,16 +1675,18 @@ export function CampaignsView({
   const activeFetchError =
     fetchError || (!effectiveOrgId ? 'Organisasi belum dipilih atau tidak aktif. Silakan pilih workspace Anda.' : null);
 
+  const { isDark, colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       {/* 1. HEADER SECTION */}
       <View style={styles.headerRow}>
         <View style={styles.headerLeft}>
           <View style={styles.titleWithBadge}>
-            <Text style={styles.pageTitle}>Kampanye Siaran</Text>
+            <Text style={[styles.pageTitle, { color: colors.textPrimary }]}>Kampanye Siaran</Text>
             <View style={styles.counterBadge}>
               <Text style={styles.counterBadgeText}>
-                {campaigns.length} Kampanye di Supabase
+                {campaigns.length} Kampanye
               </Text>
             </View>
             {userRole && (
@@ -1450,7 +1695,7 @@ export function CampaignsView({
               </View>
             )}
           </View>
-          <Text style={styles.pageSubtitle}>
+          <Text style={[styles.pageSubtitle, { color: colors.textSecondary }]}>
             Kelola draf pesan, jadwal siaran massal, dan arsip komunikasi terpusat di Supabase.
           </Text>
         </View>
@@ -1460,8 +1705,83 @@ export function CampaignsView({
           onPress={handleOpenAddForm}
           activeOpacity={0.8}
         >
-          <AppIcon name="plus" size={15} color="#FFFFFF" />
-          <Text style={styles.btnCreateCampaignText}>+ Buat Kampanye</Text>
+          <AppIcon name="plus" size={14} color="#FFFFFF" />
+          <Text style={styles.btnCreateCampaignText}>Buat Kampanye</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* 1.1 RINGKASAN JUMLAH KAMPANYE DAN STATUS (STATISTICS GRID) */}
+      <View style={styles.statsGrid}>
+        {/* Card 1: Total Kampanye */}
+        <TouchableOpacity
+          style={[styles.statCard, activeFilter === 'all' && styles.statCardActive]}
+          onPress={() => setActiveFilter('all')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.statCardTop}>
+            <Text style={styles.statLabel}>Total Kampanye</Text>
+            <View style={[styles.statIconBadge, { backgroundColor: colors.isDark ? '#1E293B' : '#F1F5F9' }]}>
+              <AppIcon name="campaign" size={14} color={colors.textPrimary} />
+            </View>
+          </View>
+          <Text style={styles.statVal}>{countAll}</Text>
+          <Text style={styles.statSub}>Seluruh kampanye tersimpan</Text>
+        </TouchableOpacity>
+
+        {/* Card 2: Terjadwal & Berjalan */}
+        <TouchableOpacity
+          style={[styles.statCard, (activeFilter === 'Terjadwal' || activeFilter === 'Berjalan') && styles.statCardActive]}
+          onPress={() => setActiveFilter(countScheduled > 0 ? 'Terjadwal' : countRunning > 0 ? 'Berjalan' : 'all')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.statCardTop}>
+            <Text style={styles.statLabel}>Terjadwal & Berjalan</Text>
+            <View style={[styles.statIconBadge, { backgroundColor: colors.isDark ? 'rgba(13, 148, 136, 0.2)' : '#CCFBF1' }]}>
+              <AppIcon name="calendar" size={14} color={colors.accent} />
+            </View>
+          </View>
+          <Text style={[styles.statVal, { color: colors.accent }]}>
+            {countScheduled + countRunning}
+          </Text>
+          <Text style={styles.statSub}>
+            {countScheduled} terjadwal • {countRunning} berjalan
+          </Text>
+        </TouchableOpacity>
+
+        {/* Card 3: Selesai */}
+        <TouchableOpacity
+          style={[styles.statCard, activeFilter === 'Selesai' && styles.statCardActive]}
+          onPress={() => setActiveFilter('Selesai')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.statCardTop}>
+            <Text style={styles.statLabel}>Selesai</Text>
+            <View style={[styles.statIconBadge, { backgroundColor: colors.isDark ? 'rgba(16, 185, 129, 0.2)' : '#DCFCE7' }]}>
+              <AppIcon name="check" size={14} color="#059669" />
+            </View>
+          </View>
+          <Text style={[styles.statVal, { color: colors.isDark ? '#34D399' : '#059669' }]}>
+            {countFinished}
+          </Text>
+          <Text style={styles.statSub}>Siaran selesai dieksekusi</Text>
+        </TouchableOpacity>
+
+        {/* Card 4: Draf */}
+        <TouchableOpacity
+          style={[styles.statCard, activeFilter === 'Draft' && styles.statCardActive]}
+          onPress={() => setActiveFilter('Draft')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.statCardTop}>
+            <Text style={styles.statLabel}>Draf</Text>
+            <View style={[styles.statIconBadge, { backgroundColor: colors.isDark ? '#1E293B' : '#F1F5F9' }]}>
+              <AppIcon name="file-text" size={14} color={colors.textSecondary} />
+            </View>
+          </View>
+          <Text style={[styles.statVal, { color: colors.textSecondary }]}>
+            {countDraft}
+          </Text>
+          <Text style={styles.statSub}>Draf belum dijadwalkan</Text>
         </TouchableOpacity>
       </View>
 
@@ -1522,12 +1842,12 @@ export function CampaignsView({
         style={[
           styles.noticeBanner,
           gatewayStatus?.code === 'ready'
-            ? { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }
+            ? { backgroundColor: colors.successBg, borderColor: colors.successBorder }
             : gatewayStatus?.code === 'waiting_gateway'
-            ? { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' }
+            ? { backgroundColor: colors.warningBg, borderColor: colors.warningBorder }
             : gatewayStatus?.code === 'unconfigured' || gatewayStatus?.code === 'connection_error'
-            ? { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }
-            : { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' },
+            ? { backgroundColor: colors.dangerBg, borderColor: colors.dangerBorder }
+            : { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
         ]}
       >
         <View style={{ flex: 1 }}>
@@ -1583,16 +1903,22 @@ export function CampaignsView({
       </View>
 
       {/* 2. FILTER & SEARCH BAR */}
-      <View style={styles.filterSection}>
+      <View style={[styles.filterSection, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
         {/* Search Box */}
-        <View style={styles.searchBarBox}>
+        <View
+          style={[styles.searchBarBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+          // @ts-ignore
+          dataSet={{ inputContainer: 'true' }}
+        >
           <AppIcon name="search" size={15} color={COLORS.textSecondary} />
           <TextInput
-            style={styles.searchTextInput}
+            style={[styles.searchTextInput, { color: colors.textPrimary }]}
             placeholder="Cari berdasarkan nama kampanye atau isi pesan..."
-            placeholderTextColor={COLORS.textMuted}
+            placeholderTextColor={colors.textPlaceholder}
             value={searchQuery}
             onChangeText={setSearchQuery}
+            // @ts-ignore
+            dataSet={{ embedded: 'true' }}
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => setSearchQuery('')}>
@@ -1667,7 +1993,7 @@ export function CampaignsView({
                 setActiveFilter('all');
               }}
             >
-              <AppIcon name="refresh" size={12} color={COLORS.textDark} />
+              <AppIcon name="refresh" size={12} color={colors.textPrimary} />
               <Text style={styles.btnResetFilterText}>Reset Filter</Text>
             </TouchableOpacity>
           )}
@@ -1685,7 +2011,7 @@ export function CampaignsView({
           /* EMPTY STATE */
           <View style={styles.emptyContainer}>
             <View style={styles.emptyIconCircle}>
-              <AppIcon name="campaign" size={26} color={COLORS.forestDark} />
+              <AppIcon name="campaign" size={26} color={colors.textPrimary} />
             </View>
             <Text style={styles.emptyTitle}>
               {campaigns.length === 0 ? 'Belum Ada Kampanye Tersimpan' : 'Kampanye Tidak Ditemukan'}
@@ -1711,16 +2037,16 @@ export function CampaignsView({
                   setActiveFilter('all');
                 }}
               >
-                <AppIcon name="refresh" size={13} color={COLORS.forestDark} />
+                <AppIcon name="refresh" size={13} color={colors.textPrimary} />
                 <Text style={styles.btnResetFilterText}>Reset Filter & Pencarian</Text>
               </TouchableOpacity>
             )}
           </View>
         ) : isDesktop ? (
           /* TABEL DESKTOP */
-          <View style={styles.tableWrapper}>
+          <View style={[styles.tableWrapper, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
             {/* Table Header */}
-            <View style={styles.tableHeadRow}>
+            <View style={[styles.tableHeadRow, { backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border }]}>
               <Text style={[styles.thCell, { flex: 2.5 }]}>Nama & Cuplikan Pesan</Text>
               <Text style={[styles.thCell, { flex: 1.3 }]}>Status</Text>
               <Text style={[styles.thCell, { flex: 1.8 }]}>Penyimpanan & Kanal</Text>
@@ -1751,7 +2077,7 @@ export function CampaignsView({
                     {/* Kanal & Penyimpanan */}
                     <View style={[styles.tdCell, { flex: 1.8 }]}>
                       <View style={styles.targetPill}>
-                        <AppIcon name="campaign" size={12} color={COLORS.forestDark} />
+                        <AppIcon name="campaign" size={12} color={colors.textPrimary} />
                         <Text style={styles.targetPillText}>
                           {camp.totalRecipients ? `${camp.sentCount || 0}/${camp.totalRecipients} Terkirim` : 'Tersimpan di Supabase'}
                         </Text>
@@ -1783,12 +2109,12 @@ export function CampaignsView({
                     <View style={[styles.tdCell, { flex: 2.4, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }]}>
                       {/* Status Penerima */}
                       <TouchableOpacity
-                        style={[styles.actionBtnSmall, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}
+                        style={[styles.actionBtnSmall, { backgroundColor: colors.accentSubtle, borderColor: colors.accentBorder }]}
                         onPress={() => handleOpenRecipients(camp)}
                         accessibilityLabel="Status Penerima"
                       >
-                        <AppIcon name="users" size={12} color="#16A34A" />
-                        <Text style={[styles.actionBtnSmallText, { color: '#16A34A' }]}>
+                        <AppIcon name="users" size={12} color={colors.accent} />
+                        <Text style={[styles.actionBtnSmallText, { color: colors.accent }]}>
                           Penerima
                         </Text>
                       </TouchableOpacity>
@@ -1802,7 +2128,7 @@ export function CampaignsView({
                         }}
                         accessibilityLabel="Lihat Detail"
                       >
-                        <AppIcon name="campaign" size={13} color={COLORS.forestDark} />
+                        <AppIcon name="campaign" size={13} color={colors.textPrimary} />
                         <Text style={styles.actionBtnSmallText}>Detail</Text>
                       </TouchableOpacity>
 
@@ -1813,7 +2139,7 @@ export function CampaignsView({
                           onPress={() => handleOpenEditForm(camp)}
                           accessibilityLabel="Edit Kampanye"
                         >
-                          <AppIcon name="edit" size={12} color={COLORS.forestDark} />
+                          <AppIcon name="edit" size={12} color={colors.textPrimary} />
                         </TouchableOpacity>
                       )}
 
@@ -1823,14 +2149,39 @@ export function CampaignsView({
                         onPress={() => handleDuplicateCampaign(camp)}
                         accessibilityLabel="Duplikasikan Kampanye"
                       >
-                        <AppIcon name="copy" size={12} color={COLORS.forestDark} />
+                        <AppIcon name="copy" size={12} color={colors.textPrimary} />
                       </TouchableOpacity>
 
-                      {/* Batalkan Jadwal */}
+                      {/* Batalkan Siaran (Berjalan) */}
+                      {camp.status === 'Berjalan' && (
+                        <TouchableOpacity
+                          style={[
+                            styles.actionBtnSmall,
+                            styles.actionBtnWarning,
+                            {
+                              backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2',
+                              borderColor: colors.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FCA5A5',
+                              paddingHorizontal: 8,
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              gap: 3,
+                            },
+                          ]}
+                          onPress={() => handleOpenCancelModal(camp)}
+                          accessibilityLabel="Batalkan Siaran"
+                        >
+                          <AppIcon name="close" size={11} color="#DC2626" />
+                          <Text style={[styles.actionBtnWarningText, { color: '#DC2626', fontWeight: '700' }]}>
+                            Batalkan
+                          </Text>
+                        </TouchableOpacity>
+                      )}
+
+                      {/* Batalkan Jadwal (Terjadwal) */}
                       {camp.status === 'Terjadwal' && (
                         <TouchableOpacity
                           style={[styles.actionBtnSmall, styles.actionBtnWarning]}
-                          onPress={() => handleCancelSchedule(camp)}
+                          onPress={() => handleOpenCancelModal(camp)}
                           accessibilityLabel="Batalkan Jadwal"
                         >
                           <Text style={styles.actionBtnWarningText}>Batal</Text>
@@ -1856,14 +2207,14 @@ export function CampaignsView({
           <ScrollView style={styles.mobileCardsList} showsVerticalScrollIndicator={false}>
             {filteredCampaigns.map((camp) => {
               return (
-                <View key={camp.id} style={styles.mobileCard}>
+                <View key={camp.id} style={[styles.mobileCard, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
                   {/* Top: Status & Channel */}
                   <View style={styles.mobileCardTop}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                       <CampaignStatusBadge status={camp.status} />
                       {camp.status === 'Berjalan' && (camp.sentCount || 0) === 0 && gatewayStatus?.code === 'waiting_gateway' && (
-                        <View style={{ backgroundColor: '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                          <Text style={{ fontSize: 10, color: '#92400E', fontWeight: '600' }}>Menunggu Gateway</Text>
+                        <View style={{ backgroundColor: colors.isDark ? 'rgba(245, 158, 11, 0.15)' : '#FEF3C7', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                          <Text style={{ fontSize: 10, color: colors.isDark ? '#FBBF24' : '#92400E', fontWeight: '600' }}>Menunggu Gateway</Text>
                         </View>
                       )}
                     </View>
@@ -1881,12 +2232,12 @@ export function CampaignsView({
                   {/* Target & DB */}
                   <View style={styles.mobileMetaRow}>
                     <View style={styles.targetPill}>
-                      <AppIcon name="campaign" size={12} color={COLORS.forestDark} />
+                      <AppIcon name="campaign" size={12} color={colors.textPrimary} />
                       <Text style={styles.targetPillText}>
                         {camp.totalRecipients ? `${camp.sentCount || 0}/${camp.totalRecipients} Terkirim` : 'Supabase DB'}
                       </Text>
                     </View>
-                    <Text style={{ fontSize: 11, color: COLORS.textSecondary }}>
+                    <Text style={{ fontSize: 11, color: colors.textSecondary }}>
                       {camp.senderPhone ? `Dari: ${camp.senderPhone}` : camp.channel}
                     </Text>
                   </View>
@@ -1894,21 +2245,14 @@ export function CampaignsView({
                   {/* Actions Row */}
                   <View style={styles.mobileActionsRow}>
                     <TouchableOpacity
-                      style={[styles.mobileActionBtn, { backgroundColor: '#F0FDF4' }]}
-                      onPress={() => handleOpenRecipients(camp)}
-                    >
-                      <AppIcon name="users" size={13} color="#16A34A" />
-                      <Text style={[styles.mobileActionBtnText, { color: '#16A34A' }]}>Penerima</Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
                       style={styles.mobileActionBtn}
                       onPress={() => {
                         setActiveCampaign(camp);
                         setIsDetailModalOpen(true);
                       }}
+                      accessibilityLabel="Lihat Detail Kampanye"
                     >
-                      <AppIcon name="campaign" size={13} color={COLORS.forestDark} />
+                      <AppIcon name="campaign" size={13} color={colors.textPrimary} />
                       <Text style={styles.mobileActionBtnText}>Detail</Text>
                     </TouchableOpacity>
 
@@ -1916,24 +2260,57 @@ export function CampaignsView({
                       <TouchableOpacity
                         style={styles.mobileActionBtn}
                         onPress={() => handleOpenEditForm(camp)}
+                        accessibilityLabel="Edit Kampanye"
                       >
-                        <AppIcon name="edit" size={13} color={COLORS.forestDark} />
+                        <AppIcon name="edit" size={13} color={colors.textPrimary} />
                         <Text style={styles.mobileActionBtnText}>Edit</Text>
                       </TouchableOpacity>
                     )}
 
                     <TouchableOpacity
+                      style={[styles.mobileActionBtn, { backgroundColor: colors.accentSubtle }]}
+                      onPress={() => handleOpenRecipients(camp)}
+                      accessibilityLabel="Lihat Penerima Kampanye"
+                    >
+                      <AppIcon name="users" size={13} color={colors.accent} />
+                      <Text style={[styles.mobileActionBtnText, { color: colors.accent }]}>Penerima</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
                       style={styles.mobileActionBtn}
                       onPress={() => handleDuplicateCampaign(camp)}
+                      accessibilityLabel="Duplikasikan Kampanye"
                     >
-                      <AppIcon name="copy" size={13} color={COLORS.forestDark} />
+                      <AppIcon name="copy" size={13} color={colors.textPrimary} />
                       <Text style={styles.mobileActionBtnText}>Salin</Text>
                     </TouchableOpacity>
 
+                    {/* Batalkan Siaran (Berjalan) */}
+                    {camp.status === 'Berjalan' && (
+                      <TouchableOpacity
+                        style={[
+                          styles.mobileActionBtn,
+                          {
+                            backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2',
+                            borderColor: colors.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FCA5A5',
+                          },
+                        ]}
+                        onPress={() => handleOpenCancelModal(camp)}
+                        accessibilityLabel="Batalkan Siaran"
+                      >
+                        <AppIcon name="close" size={13} color="#DC2626" />
+                        <Text style={[styles.mobileActionBtnText, { color: '#DC2626', fontWeight: '700' }]}>
+                          Batalkan Siaran
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Batalkan Jadwal (Terjadwal) */}
                     {camp.status === 'Terjadwal' && (
                       <TouchableOpacity
                         style={[styles.mobileActionBtn, styles.actionBtnWarning]}
-                        onPress={() => handleCancelSchedule(camp)}
+                        onPress={() => handleOpenCancelModal(camp)}
+                        accessibilityLabel="Batalkan Jadwal"
                       >
                         <Text style={styles.actionBtnWarningText}>Batal Jadwal</Text>
                       </TouchableOpacity>
@@ -1942,6 +2319,7 @@ export function CampaignsView({
                     <TouchableOpacity
                       style={[styles.mobileActionBtn, styles.actionBtnDanger]}
                       onPress={() => handleOpenDelete(camp)}
+                      accessibilityLabel="Hapus Kampanye"
                     >
                       <AppIcon name="trash" size={13} color="#DC2626" />
                     </TouchableOpacity>
@@ -1972,7 +2350,7 @@ export function CampaignsView({
           <View style={[styles.modalDialog, { maxWidth: 680 }]}>
             {/* Header Modal */}
             <View style={styles.modalHeader}>
-              <View>
+              <View style={{ flex: 1, minWidth: 0, marginRight: 10 }}>
                 <Text style={styles.modalTitle}>
                   {activeCampaign ? 'Edit Draf Kampanye Siaran' : 'Buat Kampanye Siaran Baru'}
                 </Text>
@@ -1984,7 +2362,7 @@ export function CampaignsView({
                 style={styles.modalCloseBtn}
                 onPress={() => setIsFormModalOpen(false)}
               >
-                <AppIcon name="close" size={16} color={COLORS.textDark} />
+                <AppIcon name="close" size={16} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
 
@@ -2006,7 +2384,7 @@ export function CampaignsView({
                 <TextInput
                   style={styles.inputField}
                   placeholder="Contoh: Pengumuman PSB Gelombang 1"
-                  placeholderTextColor={COLORS.textMuted}
+                  placeholderTextColor={colors.textPlaceholder}
                   value={formName}
                   onChangeText={(val) => {
                     setFormName(val);
@@ -2028,7 +2406,7 @@ export function CampaignsView({
                 <TextInput
                   style={[styles.inputField, styles.textareaField]}
                   placeholder="Ketik draf isi pesan siaran resmi yang akan disimpan..."
-                  placeholderTextColor={COLORS.textMuted}
+                  placeholderTextColor={colors.textPlaceholder}
                   value={formMessage}
                   onChangeText={(val) => {
                     setFormMessage(val);
@@ -2037,11 +2415,54 @@ export function CampaignsView({
                   multiline
                   numberOfLines={4}
                 />
+                {/* Variabel Template Cepat */}
+                <View style={{ marginTop: 8, gap: 6 }}>
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, fontWeight: '600' }}>
+                    Variabel Personalisasi Pesan:
+                  </Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    {[
+                      { label: '{{nama}}', desc: 'Nama Kontak' },
+                      { label: '{{telepon}}', desc: 'Nomor WhatsApp' },
+                      { label: '{{label}}', desc: 'Kategori / Label' },
+                      { label: '{{organisasi}}', desc: 'Nama Organisasi' },
+                    ].map((v) => (
+                      <TouchableOpacity
+                        key={v.label}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 4,
+                          backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
+                          borderWidth: 1,
+                          borderColor: colors.isDark ? '#303030' : colors.border,
+                          borderRadius: 6,
+                          paddingHorizontal: 8,
+                          paddingVertical: 5,
+                        }}
+                        onPress={() => {
+                          setFormMessage((prev) => `${prev} ${v.label}`);
+                          if (formError) setFormError(null);
+                        }}
+                        accessibilityLabel={`Sisipkan variabel ${v.label}`}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '700', color: colors.accent }}>{v.label}</Text>
+                        <Text style={{ fontSize: 10, color: colors.textMuted }}>• {v.desc}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
               </View>
 
               {/* LIVE PREVIEW PESAN WHATSAPP */}
               <View style={styles.previewSection}>
-                <Text style={styles.previewSectionTitle}>Pratinjau Pesan Pelanggan (WhatsApp Preview):</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={styles.previewSectionTitle}>Pratinjau Pesan WhatsApp:</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <AppIcon name="check" size={11} color={colors.accent} />
+                    <Text style={{ fontSize: 10, color: colors.textMuted }}>Personalisasi Aktif</Text>
+                  </View>
+                </View>
                 <View style={styles.waPreviewContainer}>
                   <View style={styles.waPreviewHeader}>
                     <View style={styles.waAvatarDot} />
@@ -2051,11 +2472,15 @@ export function CampaignsView({
                     <Text style={styles.waBubbleText}>
                       {formMessage.trim().length > 0
                         ? formMessage
+                            .replace(/\{\{nama\}\}|\{nama\}/gi, 'Ahmad Dahlan')
+                            .replace(/\{\{telepon\}\}|\{telepon\}/gi, '+62 812-3456-7890')
+                            .replace(/\{\{label\}\}|\{label\}/gi, formSegment !== 'all' ? formSegment : 'Wali Santri')
+                            .replace(/\{\{organisasi\}\}|\{organisasi\}/gi, 'Pesantren Al-Hikmah')
                         : '(Pratinjau pesan Anda akan muncul di sini...)'}
                     </Text>
                     <View style={styles.waBubbleFooter}>
                       <Text style={styles.waTime}>10:00</Text>
-                      <AppIcon name="check" size={11} color={COLORS.emerald} />
+                      <AppIcon name="check-check" size={12} color={colors.accent} />
                     </View>
                   </View>
                 </View>
@@ -2065,13 +2490,128 @@ export function CampaignsView({
               <View style={styles.formGroup}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                   <Text style={styles.formLabel}>
-                    3. Pilih Penerima Pesan <Text style={styles.requiredStar}>*</Text>
+                    3. Target Audiens & Penerima Pesan <Text style={styles.requiredStar}>*</Text>
                   </Text>
                   <View style={styles.recipientCountBadge}>
                     <Text style={styles.recipientCountBadgeText}>
                       {selectedContactIds.length} kontak dipilih
                     </Text>
                   </View>
+                </View>
+
+                {/* Dropdown Pemilihan Label Target */}
+                <View style={{ marginBottom: 10, zIndex: 10 }}>
+                  <Text style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4, fontWeight: '600' }}>
+                    Segmentasi Target Label Kontak:
+                  </Text>
+                  <TouchableOpacity
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      backgroundColor: colors.surfaceSecondary,
+                      borderWidth: 1,
+                      borderColor: isSegmentDropdownOpen ? colors.accent : colors.border,
+                      borderRadius: 8,
+                      paddingHorizontal: 12,
+                      paddingVertical: 10,
+                    }}
+                    onPress={() => setIsSegmentDropdownOpen(!isSegmentDropdownOpen)}
+                    activeOpacity={0.8}
+                  >
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1, flexWrap: 'wrap' }}>
+                      <AppIcon name="users" size={15} color={colors.accent} />
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: colors.textPrimary }}>
+                        {formSegment === 'all'
+                          ? 'Semua Kontak Organisasi (Tanpa Filter Label)'
+                          : `Target Label: ${formSegment}`}
+                      </Text>
+                      {formSegment !== 'all' && (
+                        <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: colors.accentSubtle, borderWidth: 1, borderColor: colors.accentBorder }}>
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: colors.accent }}>{formSegment}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <AppIcon name={isSegmentDropdownOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.textSecondary} />
+                  </TouchableOpacity>
+
+                  {/* Dropdown Menu List */}
+                  {isSegmentDropdownOpen && (
+                    <View
+                      style={{
+                        marginTop: 4,
+                        backgroundColor: colors.surfaceCard,
+                        borderWidth: 1,
+                        borderColor: colors.border,
+                        borderRadius: 8,
+                        overflow: 'hidden',
+                        ...SHADOWS.card,
+                      }}
+                    >
+                      <TouchableOpacity
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          paddingHorizontal: 12,
+                          paddingVertical: 10,
+                          backgroundColor: formSegment === 'all' ? colors.accentSubtle : 'transparent',
+                          borderBottomWidth: 1,
+                          borderBottomColor: colors.border,
+                        }}
+                        onPress={() => handleSelectSegment('all')}
+                      >
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          <AppIcon name={formSegment === 'all' ? 'check' : 'users'} size={14} color={formSegment === 'all' ? colors.accent : colors.textMuted} />
+                          <Text style={{ fontSize: 12, fontWeight: formSegment === 'all' ? '700' : '500', color: colors.textPrimary }}>
+                            Semua Kontak ({contacts.filter((c) => isValidPhoneNumber(c.phone)).length} nomor valid)
+                          </Text>
+                        </View>
+                        {formSegment === 'all' && (
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: colors.accent }}>Aktif</Text>
+                        )}
+                      </TouchableOpacity>
+
+                      {effectiveLabels.map((lbl) => {
+                        const isSelected = formSegment === lbl;
+                        const matchCount = contacts.filter((c) => {
+                          const has = (c.labels && c.labels.includes(lbl)) || c.label === lbl;
+                          return has && isValidPhoneNumber(c.phone);
+                        }).length;
+                        const lblColors = getLabelColors(lbl, isDark);
+
+                        return (
+                          <TouchableOpacity
+                            key={lbl}
+                            style={{
+                              flexDirection: 'row',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              paddingHorizontal: 12,
+                              paddingVertical: 9,
+                              backgroundColor: isSelected ? colors.accentSubtle : 'transparent',
+                              borderBottomWidth: 1,
+                              borderBottomColor: colors.border,
+                            }}
+                            onPress={() => handleSelectSegment(lbl as ContactLabel)}
+                          >
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                              <AppIcon name={isSelected ? 'check' : 'users'} size={13} color={isSelected ? colors.accent : colors.textMuted} />
+                              <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 12, backgroundColor: lblColors.bg, borderWidth: 1, borderColor: lblColors.border }}>
+                                <Text style={{ fontSize: 11, fontWeight: '600', color: lblColors.text }}>{lbl}</Text>
+                              </View>
+                              <Text style={{ fontSize: 11, color: colors.textSecondary }}>
+                                ({matchCount} kontak)
+                              </Text>
+                            </View>
+                            {isSelected && (
+                              <Text style={{ fontSize: 10, fontWeight: '700', color: colors.accent }}>Terpilih</Text>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
                 </View>
 
                 <View style={styles.recipientBoxCard}>
@@ -2111,14 +2651,14 @@ export function CampaignsView({
                       <View style={styles.targetCountBanner}>
                         <Text style={styles.targetCountBannerText}>
                           🎯 <Text style={{ fontWeight: '700' }}>{targetSummary.total} Kontak Terpilih:</Text>{' '}
-                          <Text style={{ color: '#059669', fontWeight: '700' }}>{targetSummary.valid} Siap Kirim</Text> •{' '}
-                          <Text style={{ color: '#D97706' }}>{targetSummary.optOut} Opt-Out</Text> •{' '}
+                          <Text style={{ color: colors.isDark ? '#34D399' : '#059669', fontWeight: '700' }}>{targetSummary.valid} Siap Kirim</Text> •{' '}
+                          <Text style={{ color: colors.isDark ? '#FBBF24' : '#D97706' }}>{targetSummary.optOut} Opt-Out</Text> •{' '}
                           {targetSummary.duplicates > 0 && (
                             <>
-                              <Text style={{ color: '#6366F1' }}>{targetSummary.duplicates} Duplikat</Text> •{' '}
+                              <Text style={{ color: colors.isDark ? '#818CF8' : '#6366F1' }}>{targetSummary.duplicates} Duplikat</Text> •{' '}
                             </>
                           )}
-                          <Text style={{ color: '#DC2626' }}>{targetSummary.invalid} Tidak Valid</Text>
+                          <Text style={{ color: colors.isDark ? '#F87171' : '#DC2626' }}>{targetSummary.invalid} Tidak Valid</Text>
                         </Text>
                       </View>
 
@@ -2161,14 +2701,21 @@ export function CampaignsView({
                     ]}
                     onPress={() => setFormDeliveryMode('now')}
                   >
-                    <Text
-                      style={[
-                        styles.modeOptionTitle,
-                        formDeliveryMode === 'now' && styles.modeOptionTitleSelected,
-                      ]}
-                    >
-                      ⚡ Kirim Sekarang
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <AppIcon
+                        name="zap"
+                        size={14}
+                        color={formDeliveryMode === 'now' ? COLORS.emerald : colors.textPrimary}
+                      />
+                      <Text
+                        style={[
+                          styles.modeOptionTitle,
+                          formDeliveryMode === 'now' && styles.modeOptionTitleSelected,
+                        ]}
+                      >
+                        Kirim Sekarang
+                      </Text>
+                    </View>
                     <Text style={styles.modeOptionDesc}>
                       Kirim langsung via antrean persisten WhatsApp worker
                     </Text>
@@ -2181,14 +2728,21 @@ export function CampaignsView({
                     ]}
                     onPress={() => setFormDeliveryMode('scheduled')}
                   >
-                    <Text
-                      style={[
-                        styles.modeOptionTitle,
-                        formDeliveryMode === 'scheduled' && styles.modeOptionTitleSelected,
-                      ]}
-                    >
-                      📅 Terjadwal
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <AppIcon
+                        name="calendar"
+                        size={14}
+                        color={formDeliveryMode === 'scheduled' ? COLORS.emerald : colors.textPrimary}
+                      />
+                      <Text
+                        style={[
+                          styles.modeOptionTitle,
+                          formDeliveryMode === 'scheduled' && styles.modeOptionTitleSelected,
+                        ]}
+                      >
+                        Terjadwal
+                      </Text>
+                    </View>
                     <Text style={styles.modeOptionDesc}>
                       Pilih tanggal kalender dan jam pengiriman WIB
                     </Text>
@@ -2201,14 +2755,21 @@ export function CampaignsView({
                     ]}
                     onPress={() => setFormDeliveryMode('draft')}
                   >
-                    <Text
-                      style={[
-                        styles.modeOptionTitle,
-                        formDeliveryMode === 'draft' && styles.modeOptionTitleSelected,
-                      ]}
-                    >
-                      📝 Simpan Draf
-                    </Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <AppIcon
+                        name="file-text"
+                        size={14}
+                        color={formDeliveryMode === 'draft' ? COLORS.emerald : colors.textPrimary}
+                      />
+                      <Text
+                        style={[
+                          styles.modeOptionTitle,
+                          formDeliveryMode === 'draft' && styles.modeOptionTitleSelected,
+                        ]}
+                      >
+                        Simpan Draf
+                      </Text>
+                    </View>
                     <Text style={styles.modeOptionDesc}>Simpan ke database tanpa antrean</Text>
                   </TouchableOpacity>
                 </View>
@@ -2257,13 +2818,13 @@ export function CampaignsView({
                                 <AppIcon
                                   name="chevron-right"
                                   size={14}
-                                  color={isPrevMonthDisabled ? '#CBD5E1' : COLORS.forestDark}
+                                  color={isPrevMonthDisabled ? (colors.isDark ? '#404040' : '#CBD5E1') : colors.textPrimary}
                                 />
                               </View>
                             </TouchableOpacity>
 
                             <View style={styles.calHeaderTitleContainer}>
-                              <AppIcon name="calendar" size={15} color={COLORS.emerald} />
+                              <AppIcon name="calendar" size={15} color={colors.accent} />
                               <Text style={styles.calHeaderTitle}>
                                 {new Intl.DateTimeFormat('id-ID', {
                                   month: 'long',
@@ -2278,7 +2839,7 @@ export function CampaignsView({
                               accessibilityRole="button"
                               accessibilityLabel="Bulan Berikutnya"
                             >
-                              <AppIcon name="chevron-right" size={14} color={COLORS.forestDark} />
+                              <AppIcon name="chevron-right" size={14} color={colors.textPrimary} />
                             </TouchableOpacity>
                           </View>
                         );
@@ -2322,7 +2883,7 @@ export function CampaignsView({
                           for (let day = 1; day <= totalDays; day++) {
                             const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
                             const endOfDayMs = new Date(`${dateKey}T23:59:59+07:00`).getTime();
-                            const isPastDay = endOfDayMs < Date.now();
+                            const isPastDay = currentTimestamp > 0 ? endOfDayMs < currentTimestamp : false;
                             const isSelectedDay = formScheduleDate === dateKey;
                             const isToday = dateKey === todayStr;
 
@@ -2763,7 +3324,7 @@ export function CampaignsView({
                             keyboardType="number-pad"
                             maxLength={2}
                             placeholder="09"
-                            placeholderTextColor="#94A3B8"
+                            placeholderTextColor={colors.textPlaceholder}
                             accessibilityLabel="Ketik jam 00-23"
                           />
                           <Text style={styles.accessibleColon}>:</Text>
@@ -2791,7 +3352,7 @@ export function CampaignsView({
                             keyboardType="number-pad"
                             maxLength={2}
                             placeholder="00"
-                            placeholderTextColor="#94A3B8"
+                            placeholderTextColor={colors.textPlaceholder}
                             accessibilityLabel="Ketik menit 00-59"
                           />
                           <View style={styles.accessibleTzPill}>
@@ -2849,13 +3410,13 @@ export function CampaignsView({
                       const checkMs = new Date(
                         `${formScheduleDate}T${formScheduleHour}:${formScheduleMinute}:00+07:00`
                       ).getTime();
-                      const isFuture = !isNaN(checkMs) && checkMs > Date.now();
+                      const isFuture = !isNaN(checkMs) && (currentTimestamp > 0 ? checkMs > currentTimestamp : true);
 
                       return (
                         <>
                           <View style={styles.scheduleSummaryHeaderRow}>
                             <View style={styles.scheduleSummaryTitleGroup}>
-                              <AppIcon name="clock" size={14} color={COLORS.forestDark} />
+                              <AppIcon name="clock" size={14} color={colors.textPrimary} />
                               <Text style={styles.scheduleSummaryTitle}>
                                 RINGKASAN JADWAL TERPILIH
                               </Text>
@@ -2935,7 +3496,7 @@ export function CampaignsView({
                       style={[
                         styles.summaryRowValue,
                         {
-                          color: selectedContactIds.length === 0 ? '#DC2626' : '#059669',
+                          color: selectedContactIds.length === 0 ? (colors.isDark ? '#F87171' : '#DC2626') : (colors.isDark ? '#34D399' : '#059669'),
                           fontWeight: '700',
                         },
                       ]}
@@ -2947,7 +3508,7 @@ export function CampaignsView({
                   </View>
                   <View style={styles.summaryRowItem}>
                     <Text style={styles.summaryRowLabel}>Metode Pengiriman:</Text>
-                    <Text style={[styles.summaryRowValue, { color: COLORS.forestDark, fontWeight: '600' }]}>
+                    <Text style={[styles.summaryRowValue, { color: colors.isDark ? colors.accent : COLORS.forestDark, fontWeight: '600' }]}>
                       {formDeliveryMode === 'now'
                         ? '⚡ Kirim Sekarang (Antrean Persisten Worker)'
                         : formDeliveryMode === 'scheduled'
@@ -3032,20 +3593,26 @@ export function CampaignsView({
                 style={styles.modalCloseBtn}
                 onPress={() => setIsContactPickerOpen(false)}
               >
-                <AppIcon name="close" size={16} color={COLORS.textDark} />
+                <AppIcon name="close" size={16} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
 
             {/* Pencarian dan Filter Label */}
             <View style={styles.contactPickerFilterBar}>
-              <View style={styles.contactSearchInputBox}>
+              <View
+                style={styles.contactSearchInputBox}
+                // @ts-ignore
+                dataSet={{ inputContainer: 'true' }}
+              >
                 <AppIcon name="search" size={14} color={COLORS.textMuted} />
                 <TextInput
                   style={styles.contactSearchTextInput}
                   placeholder="Cari berdasarkan nama atau nomor WhatsApp..."
-                  placeholderTextColor={COLORS.textMuted}
+                  placeholderTextColor={colors.textPlaceholder}
                   value={contactSearch}
                   onChangeText={setContactSearch}
+                  // @ts-ignore
+                  dataSet={{ embedded: 'true' }}
                 />
                 {contactSearch.length > 0 && (
                   <TouchableOpacity onPress={() => setContactSearch('')}>
@@ -3060,7 +3627,7 @@ export function CampaignsView({
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={{ gap: 6, paddingVertical: 4 }}
               >
-                {(['Semua', 'Calon Santri', 'Orang Tua', 'Santri Aktif', 'Alumni', 'Umum'] as const).map(
+                {(['Semua', ...effectiveLabels] as string[]).map(
                   (lbl) => (
                     <TouchableOpacity
                       key={lbl}
@@ -3245,7 +3812,7 @@ export function CampaignsView({
 
           <View style={[styles.modalDialog, { maxWidth: 520 }]}>
             <View style={styles.modalHeader}>
-              <View>
+              <View style={{ flex: 1, minWidth: 0, marginRight: 10 }}>
                 <Text style={styles.modalTitle}>Tinjau Rincian Pengiriman Kampanye</Text>
                 <Text style={styles.modalSubtitle}>
                   Periksa jumlah penerima dan akun pengirim sebelum konfirmasi eksekusi
@@ -3255,31 +3822,31 @@ export function CampaignsView({
                 style={styles.modalCloseBtn}
                 onPress={() => setIsReviewModalOpen(false)}
               >
-                <AppIcon name="close" size={16} color={COLORS.textDark} />
+                <AppIcon name="close" size={16} color={colors.textPrimary} />
               </TouchableOpacity>
             </View>
 
             <ScrollView style={styles.modalFormBody} showsVerticalScrollIndicator={false}>
               {/* Grid Ringkasan Penerima */}
               <View style={styles.reviewGrid}>
-                <View style={[styles.reviewCard, { backgroundColor: '#F0FDF4', borderColor: '#BBF7D0' }]}>
-                  <Text style={[styles.reviewNumber, { color: '#16A34A' }]}>{targetSummary.valid}</Text>
-                  <Text style={styles.reviewLabel}>Siap Dikirim</Text>
+                <View style={[styles.reviewCard, { backgroundColor: colors.successBg, borderColor: colors.successBorder }]}>
+                  <Text style={[styles.reviewNumber, { color: colors.successText }]}>{targetSummary.valid}</Text>
+                  <Text style={[styles.reviewLabel, { color: colors.textSecondary }]}>Siap Dikirim</Text>
                 </View>
 
-                <View style={[styles.reviewCard, { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' }]}>
-                  <Text style={[styles.reviewNumber, { color: '#D97706' }]}>{targetSummary.optOut}</Text>
-                  <Text style={styles.reviewLabel}>Opt-Out (Dilewati)</Text>
+                <View style={[styles.reviewCard, { backgroundColor: colors.warningBg, borderColor: colors.warningBorder }]}>
+                  <Text style={[styles.reviewNumber, { color: colors.warningText }]}>{targetSummary.optOut}</Text>
+                  <Text style={[styles.reviewLabel, { color: colors.textSecondary }]}>Opt-Out (Dilewati)</Text>
                 </View>
 
-                <View style={[styles.reviewCard, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
-                  <Text style={[styles.reviewNumber, { color: '#DC2626' }]}>{targetSummary.invalid}</Text>
-                  <Text style={styles.reviewLabel}>Nomor Tak Valid</Text>
+                <View style={[styles.reviewCard, { backgroundColor: colors.dangerBg, borderColor: colors.dangerBorder }]}>
+                  <Text style={[styles.reviewNumber, { color: colors.dangerText }]}>{targetSummary.invalid}</Text>
+                  <Text style={[styles.reviewLabel, { color: colors.textSecondary }]}>Nomor Tak Valid</Text>
                 </View>
 
-                <View style={[styles.reviewCard, { backgroundColor: '#F8FAFC', borderColor: '#E2E8F0' }]}>
-                  <Text style={[styles.reviewNumber, { color: '#475569' }]}>{targetSummary.total}</Text>
-                  <Text style={styles.reviewLabel}>Total Kontak</Text>
+                <View style={[styles.reviewCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                  <Text style={[styles.reviewNumber, { color: colors.textPrimary }]}>{targetSummary.total}</Text>
+                  <Text style={[styles.reviewLabel, { color: colors.textSecondary }]}>Total Kontak</Text>
                 </View>
               </View>
 
@@ -3291,7 +3858,7 @@ export function CampaignsView({
                 </View>
                 <View style={styles.reviewDetailRow}>
                   <Text style={styles.reviewDetailLabel}>Metode Pengiriman:</Text>
-                  <Text style={[styles.reviewDetailVal, { color: formDeliveryMode === 'now' ? '#059669' : '#1D4ED8', fontWeight: '700' }]}>
+                  <Text style={[styles.reviewDetailVal, { color: formDeliveryMode === 'now' ? (colors.isDark ? '#34D399' : '#059669') : (colors.isDark ? '#60A5FA' : '#1D4ED8'), fontWeight: '700' }]}>
                     {formDeliveryMode === 'now'
                       ? '⚡ Kirim Sekarang (Antrean Persisten Worker)'
                       : `🕒 Terjadwal: ${formatScheduleDisplay(formScheduleDate, `${formScheduleHour}:${formScheduleMinute}`)}`}
@@ -3335,7 +3902,7 @@ export function CampaignsView({
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <Text style={styles.btnSubmitText}>
-                    {formDeliveryMode === 'now' ? '🚀 Konfirmasi & Mulai Kirim' : '📅 Konfirmasi Jadwal'}
+                    {formDeliveryMode === 'now' ? 'Konfirmasi & Mulai Kirim' : 'Konfirmasi Jadwal'}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -3371,7 +3938,7 @@ export function CampaignsView({
                   style={styles.modalCloseBtn}
                   onPress={() => setIsDetailModalOpen(false)}
                 >
-                  <AppIcon name="close" size={16} color={COLORS.textDark} />
+                  <AppIcon name="close" size={16} color={colors.textPrimary} />
                 </TouchableOpacity>
               </View>
 
@@ -3445,11 +4012,22 @@ export function CampaignsView({
 
                 {/* Tombol Lihat Status Penerima */}
                 <TouchableOpacity
-                  style={[styles.btnSubmit, { backgroundColor: COLORS.forestDark, marginVertical: 10 }]}
+                  style={[
+                    styles.btnSubmit,
+                    {
+                      backgroundColor: colors.accent,
+                      marginVertical: 10,
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                    },
+                  ]}
                   onPress={() => handleOpenRecipients(activeCampaign)}
                 >
+                  <AppIcon name="users" size={15} color="#FFFFFF" />
                   <Text style={styles.btnSubmitText}>
-                    👥 Lihat Status Tiap Penerima ({activeCampaign.totalRecipients || 0})
+                    Lihat Status Tiap Penerima ({activeCampaign.totalRecipients || 0})
                   </Text>
                 </TouchableOpacity>
 
@@ -3472,7 +4050,7 @@ export function CampaignsView({
                       <Text style={styles.waBubbleText}>{activeCampaign.messageContent}</Text>
                       <View style={styles.waBubbleFooter}>
                         <Text style={styles.waTime}>10:00</Text>
-                        <AppIcon name="check" size={11} color={COLORS.emerald} />
+                        <AppIcon name="check-check" size={12} color={colors.accent} />
                       </View>
                     </View>
                   </View>
@@ -3486,14 +4064,41 @@ export function CampaignsView({
                     style={styles.btnSecondary}
                     onPress={() => handleOpenEditForm(activeCampaign)}
                   >
-                    <AppIcon name="edit" size={13} color={COLORS.textDark} />
+                    <AppIcon name="edit" size={13} color={colors.textPrimary} />
                     <Text style={styles.btnSecondaryText}>Edit Kampanye</Text>
                   </TouchableOpacity>
 
+                  {activeCampaign.status === 'Berjalan' && (
+                    <TouchableOpacity
+                      style={[
+                        styles.btnCancel,
+                        {
+                          borderColor: colors.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FCA5A5',
+                          backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2',
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
+                        },
+                      ]}
+                      onPress={() => handleOpenCancelModal(activeCampaign)}
+                    >
+                      <AppIcon name="close" size={13} color="#DC2626" />
+                      <Text style={[styles.btnCancelText, { color: '#DC2626', fontWeight: '700' }]}>
+                        Batalkan Siaran
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+
                   {activeCampaign.status === 'Terjadwal' && (
                     <TouchableOpacity
-                      style={[styles.btnCancel, { borderColor: '#FECACA', backgroundColor: '#FEF2F2' }]}
-                      onPress={() => handleCancelSchedule(activeCampaign)}
+                      style={[
+                        styles.btnCancel,
+                        {
+                          borderColor: colors.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FECACA',
+                          backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2',
+                        },
+                      ]}
+                      onPress={() => handleOpenCancelModal(activeCampaign)}
                     >
                       <Text style={[styles.btnCancelText, { color: '#DC2626' }]}>Batalkan Jadwal</Text>
                     </TouchableOpacity>
@@ -3506,7 +4111,7 @@ export function CampaignsView({
                       setIsDetailModalOpen(false);
                     }}
                   >
-                    <AppIcon name="copy" size={13} color={COLORS.textDark} />
+                    <AppIcon name="copy" size={13} color={colors.textPrimary} />
                     <Text style={styles.btnSecondaryText}>Duplikasikan</Text>
                   </TouchableOpacity>
                 </View>
@@ -3552,7 +4157,7 @@ export function CampaignsView({
                   style={styles.modalCloseBtn}
                   onPress={() => setIsRecipientsModalOpen(false)}
                 >
-                  <AppIcon name="close" size={16} color={COLORS.textDark} />
+                  <AppIcon name="close" size={16} color={colors.textPrimary} />
                 </TouchableOpacity>
               </View>
 
@@ -3567,23 +4172,23 @@ export function CampaignsView({
                       marginBottom: 4,
                       padding: 10,
                       borderRadius: 8,
-                      backgroundColor: '#FFFBEB',
-                      borderColor: '#FDE68A',
+                      backgroundColor: colors.isDark ? 'rgba(245, 158, 11, 0.15)' : '#FFFBEB',
+                      borderColor: colors.isDark ? 'rgba(245, 158, 11, 0.35)' : '#FDE68A',
                       borderWidth: 1,
                       flexDirection: 'row',
                       alignItems: 'flex-start',
                       gap: 8,
                     }}
                   >
-                    <AppIcon name="clock" size={16} color="#B45309" />
+                    <AppIcon name="clock" size={16} color={colors.isDark ? '#FBBF24' : '#B45309'} />
                     <View style={{ flex: 1 }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6, flexWrap: 'wrap' }}>
-                        <Text style={{ fontSize: 12, fontWeight: '700', color: '#92400E' }}>
+                        <Text style={{ fontSize: 12, fontWeight: '700', color: colors.isDark ? '#FBBF24' : '#92400E' }}>
                           Pengiriman Tertunda: {gatewayStatus?.label || 'Menunggu koneksi gateway'}
                         </Text>
                         <GatewayStatusBadge status={gatewayStatus} />
                       </View>
-                      <Text style={{ fontSize: 11, color: '#78350F', marginTop: 2, lineHeight: 15 }}>
+                      <Text style={{ fontSize: 11, color: colors.isDark ? '#FDE68A' : '#78350F', marginTop: 2, lineHeight: 15 }}>
                         {gatewayStatus?.message ||
                           'Gateway WhatsApp belum terhubung. Antrean penerima ditahan aman di server tanpa mengurangi jatah retry sampai gateway terhubung.'}
                       </Text>
@@ -3597,25 +4202,25 @@ export function CampaignsView({
                   <Text style={styles.metricPillNum}>{recipientMetrics.total}</Text>
                   <Text style={styles.metricPillLbl}>Total</Text>
                 </View>
-                <View style={[styles.metricPill, { backgroundColor: '#ECFDF5' }]}>
-                  <Text style={[styles.metricPillNum, { color: '#047857' }]}>
+                <View style={[styles.metricPill, { backgroundColor: colors.successBg }]}>
+                  <Text style={[styles.metricPillNum, { color: colors.successText }]}>
                     {recipientMetrics.sent + recipientMetrics.delivered}
                   </Text>
-                  <Text style={styles.metricPillLbl}>Terkirim</Text>
+                  <Text style={[styles.metricPillLbl, { color: colors.textSecondary }]}>Terkirim</Text>
                 </View>
-                <View style={[styles.metricPill, { backgroundColor: '#FEF2F2' }]}>
-                  <Text style={[styles.metricPillNum, { color: '#B91C1C' }]}>{recipientMetrics.failed}</Text>
-                  <Text style={styles.metricPillLbl}>Gagal</Text>
+                <View style={[styles.metricPill, { backgroundColor: colors.dangerBg }]}>
+                  <Text style={[styles.metricPillNum, { color: colors.dangerText }]}>{recipientMetrics.failed}</Text>
+                  <Text style={[styles.metricPillLbl, { color: colors.textSecondary }]}>Gagal</Text>
                 </View>
-                <View style={[styles.metricPill, { backgroundColor: '#FFFBEB' }]}>
-                  <Text style={[styles.metricPillNum, { color: '#B45309' }]}>{recipientMetrics.skipped}</Text>
-                  <Text style={styles.metricPillLbl}>Dilewati</Text>
+                <View style={[styles.metricPill, { backgroundColor: colors.warningBg }]}>
+                  <Text style={[styles.metricPillNum, { color: colors.warningText }]}>{recipientMetrics.skipped}</Text>
+                  <Text style={[styles.metricPillLbl, { color: colors.textSecondary }]}>Dilewati</Text>
                 </View>
-                <View style={[styles.metricPill, { backgroundColor: '#EFF6FF' }]}>
-                  <Text style={[styles.metricPillNum, { color: '#1D4ED8' }]}>
+                <View style={[styles.metricPill, { backgroundColor: colors.accentSubtle }]}>
+                  <Text style={[styles.metricPillNum, { color: colors.accent }]}>
                     {recipientMetrics.pending + recipientMetrics.processing}
                   </Text>
-                  <Text style={styles.metricPillLbl}>Antrean</Text>
+                  <Text style={[styles.metricPillLbl, { color: colors.textSecondary }]}>Antrean</Text>
                 </View>
               </View>
 
@@ -3675,37 +4280,37 @@ export function CampaignsView({
                           (recipientStatusFilter === 'sent' && r.status === 'delivered')
                     )
                     .map((r) => {
-                      let badgeBg = '#F1F5F9';
-                      let badgeText = '#475569';
+                      let badgeBg = colors.isDark ? '#1E293B' : '#F1F5F9';
+                      let badgeText = colors.isDark ? '#94A3B8' : '#475569';
                       let label: string = r.status;
                       if (r.status === 'sent') {
-                        badgeBg = '#ECFDF5';
-                        badgeText = '#047857';
+                        badgeBg = colors.isDark ? 'rgba(16, 185, 129, 0.15)' : '#ECFDF5';
+                        badgeText = colors.isDark ? '#34D399' : '#047857';
                         label = 'Terkirim';
                       } else if (r.status === 'delivered') {
-                        badgeBg = '#D1FAE5';
-                        badgeText = '#065F46';
+                        badgeBg = colors.isDark ? 'rgba(16, 185, 129, 0.25)' : '#D1FAE5';
+                        badgeText = colors.isDark ? '#6EE7B7' : '#065F46';
                         label = '✓✓ Tersampaikan';
                       } else if (r.status === 'failed') {
-                        badgeBg = '#FEF2F2';
-                        badgeText = '#B91C1C';
+                        badgeBg = colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2';
+                        badgeText = colors.isDark ? '#F87171' : '#B91C1C';
                         label = 'Gagal';
                       } else if (r.status === 'skipped') {
-                        badgeBg = '#FFFBEB';
-                        badgeText = '#B45309';
+                        badgeBg = colors.isDark ? 'rgba(245, 158, 11, 0.15)' : '#FFFBEB';
+                        badgeText = colors.isDark ? '#FBBF24' : '#B45309';
                         label = 'Dilewati';
                       } else if (r.status === 'processing') {
-                        badgeBg = '#EFF6FF';
-                        badgeText = '#1D4ED8';
+                        badgeBg = colors.isDark ? 'rgba(59, 130, 246, 0.15)' : '#EFF6FF';
+                        badgeText = colors.isDark ? '#60A5FA' : '#1D4ED8';
                         label = 'Diproses';
                       } else if (r.status === 'pending') {
                         if (gatewayStatus && gatewayStatus.code !== 'ready') {
-                          badgeBg = '#FFFBEB';
-                          badgeText = '#B45309';
+                          badgeBg = colors.isDark ? 'rgba(245, 158, 11, 0.15)' : '#FFFBEB';
+                          badgeText = colors.isDark ? '#FBBF24' : '#B45309';
                           label = 'Menunggu Gateway';
                         } else {
-                          badgeBg = '#F8FAFC';
-                          badgeText = '#64748B';
+                          badgeBg = colors.isDark ? '#1E293B' : '#F8FAFC';
+                          badgeText = colors.isDark ? '#94A3B8' : '#64748B';
                           label = 'Menunggu';
                         }
                       }
@@ -3743,7 +4348,7 @@ export function CampaignsView({
                   onPress={() => handleOpenRecipients(activeCampaign)}
                   disabled={isLoadingRecipients}
                 >
-                  <AppIcon name="refresh" size={13} color={COLORS.textDark} />
+                  <AppIcon name="refresh" size={13} color={colors.textPrimary} />
                   <Text style={styles.btnSecondaryText}>Segarkan Status</Text>
                 </TouchableOpacity>
 
@@ -3814,6 +4419,77 @@ export function CampaignsView({
           )}
         </View>
       </Modal>
+      {/* ========================================== */}
+      {/* 7. MODAL KONFIRMASI PEMBATALAN SIARAN      */}
+      {/* ========================================== */}
+      <Modal
+        visible={isCancelModalOpen && campaignToCancel !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!isCancelling) setIsCancelModalOpen(false);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity
+            style={styles.modalBackdrop}
+            activeOpacity={1}
+            onPress={() => !isCancelling && setIsCancelModalOpen(false)}
+          />
+
+          {campaignToCancel && (
+            <View style={[styles.modalDialog, { maxWidth: 440 }]}>
+              <View style={styles.dialogCenteredContent}>
+                <View style={[styles.iconCircleRed, { backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2', borderColor: colors.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FCA5A5', borderWidth: 1 }]}>
+                  <AppIcon name="alert" size={20} color="#DC2626" />
+                </View>
+                <Text style={styles.dialogTitle}>
+                  {campaignToCancel.status === 'Berjalan'
+                    ? 'Batalkan Siaran Kampanye?'
+                    : 'Batalkan Jadwal Kampanye?'}
+                </Text>
+                <Text style={styles.dialogDesc}>
+                  Apakah Anda yakin ingin membatalkan kampanye{' '}
+                  <Text style={{ fontWeight: '700' }}>&ldquo;{campaignToCancel.name}&rdquo;</Text>?
+                  {campaignToCancel.status === 'Berjalan'
+                    ? ' Seluruh sisa antrean pengiriman pesan yang belum terkirim akan segera dihentikan oleh worker gateway. Pesan yang sudah berhasil terkirim ke WhatsApp tidak dapat ditarik kembali.'
+                    : ' Antrean jadwal kampanye ini akan dibatalkan dan tidak akan dikirimkan ke penerima.'}
+                </Text>
+              </View>
+
+              <View style={styles.modalFooter}>
+                <TouchableOpacity
+                  style={styles.btnCancel}
+                  onPress={() => setIsCancelModalOpen(false)}
+                  disabled={isCancelling}
+                >
+                  <Text style={styles.btnCancelText}>Kembali</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.btnConfirmDelete,
+                    { backgroundColor: '#DC2626' },
+                    isCancelling && { opacity: 0.7 },
+                  ]}
+                  onPress={handleConfirmCancel}
+                  disabled={isCancelling}
+                >
+                  {isCancelling ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.btnConfirmDeleteText}>
+                      {campaignToCancel.status === 'Berjalan'
+                        ? 'Ya, Batalkan Siaran'
+                        : 'Ya, Batalkan Jadwal'}
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -3821,10 +4497,67 @@ export function CampaignsView({
 // ==========================================
 // STYLING DETAIL KAMPANYE B2B SAAS
 // ==========================================
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemePalette) => StyleSheet.create({
   container: {
     flex: 1,
     gap: 16,
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  statCard: {
+    flex: 1,
+    minWidth: 140,
+    backgroundColor: colors.surfaceCard,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    ...Platform.select({
+      web: {
+        boxShadow: colors.isDark
+          ? '0 1px 3px 0 rgba(0, 0, 0, 0.3)'
+          : '0 1px 3px 0 rgba(15, 23, 42, 0.05), 0 1px 2px -1px rgba(15, 23, 42, 0.05)',
+        cursor: 'pointer',
+      } as any,
+      default: {
+        elevation: 2,
+      },
+    }),
+  },
+  statCardActive: {
+    borderColor: colors.accent,
+    borderWidth: 1.5,
+  },
+  statCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  statIconBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  statVal: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: 4,
+  },
+  statSub: {
+    fontSize: 11,
+    color: colors.textMuted,
   },
   headerRow: {
     flexDirection: 'row',
@@ -3846,12 +4579,12 @@ const styles = StyleSheet.create({
   pageTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   counterBadge: {
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.accentBorder,
     paddingHorizontal: 8,
     paddingVertical: 2.5,
     borderRadius: 6,
@@ -3859,18 +4592,18 @@ const styles = StyleSheet.create({
   counterBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   pageSubtitle: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   btnCreateCampaign: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.emerald,
-    borderRadius: 7,
+    backgroundColor: colors.accent,
+    borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 9,
     gap: 6,
@@ -3892,16 +4625,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   feedbackSuccess: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
+    backgroundColor: colors.isDark ? 'rgba(16, 185, 129, 0.15)' : '#ECFDF5',
+    borderColor: colors.isDark ? 'rgba(16, 185, 129, 0.35)' : '#A7F3D0',
   },
   feedbackWarning: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
+    backgroundColor: colors.isDark ? 'rgba(245, 158, 11, 0.15)' : '#FFFBEB',
+    borderColor: colors.isDark ? 'rgba(245, 158, 11, 0.35)' : '#FDE68A',
   },
   feedbackInfo: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accentBorder,
   },
   feedbackBannerText: {
     fontSize: 12,
@@ -3913,9 +4646,9 @@ const styles = StyleSheet.create({
   errorBannerBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2',
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: colors.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FECACA',
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -3942,9 +4675,9 @@ const styles = StyleSheet.create({
   noticeBanner: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: COLORS.warningBg,
+    backgroundColor: colors.warningBg,
     borderWidth: 1,
-    borderColor: COLORS.warningBorder,
+    borderColor: colors.warningBorder,
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 10,
@@ -3953,30 +4686,38 @@ const styles = StyleSheet.create({
   noticeBannerTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: COLORS.warningText,
+    color: colors.warningText,
     marginBottom: 2,
   },
   noticeBannerText: {
     fontSize: 11,
-    color: COLORS.warningText,
+    color: colors.warningText,
     lineHeight: 16,
   },
 
   // Filter Section
   filterSection: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 9,
+    backgroundColor: colors.surfaceCard,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 14,
-    gap: 12,
+    borderColor: colors.border,
+    padding: 16,
+    gap: 14,
+    ...Platform.select({
+      web: {
+        boxShadow: colors.isDark ? '0 1px 3px 0 rgba(0, 0, 0, 0.3)' : '0 1px 3px 0 rgba(15, 23, 42, 0.05), 0 1px 2px -1px rgba(15, 23, 42, 0.05)',
+      },
+      default: {
+        elevation: 2,
+      },
+    }),
   },
   searchBarBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 7,
     paddingHorizontal: 12,
     height: 38,
@@ -3984,9 +4725,15 @@ const styles = StyleSheet.create({
   searchTextInput: {
     flex: 1,
     fontSize: 13,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginLeft: 8,
     paddingVertical: 0,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   filterTabsWrapper: {
     flexDirection: 'row',
@@ -3996,32 +4743,32 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   filterTabPill: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 11,
     paddingVertical: 5,
   },
   filterTabPillActive: {
-    backgroundColor: COLORS.emeraldSubtle,
-    borderColor: COLORS.emeraldBorder,
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accentBorder,
   },
   filterTabText: {
     fontSize: 11,
     fontWeight: '500',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   filterTabTextActive: {
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     fontWeight: '700',
   },
   btnResetFilter: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 5,
@@ -4030,15 +4777,15 @@ const styles = StyleSheet.create({
   btnResetFilterText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
 
   // Main Content Card
   contentCard: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     overflow: 'hidden',
     minHeight: 380,
   },
@@ -4052,7 +4799,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontWeight: '500',
   },
 
@@ -4067,9 +4814,9 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.accentBorder,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 14,
@@ -4077,12 +4824,12 @@ const styles = StyleSheet.create({
   emptyTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 6,
   },
   emptyDesc: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 18,
     maxWidth: 440,
@@ -4095,16 +4842,16 @@ const styles = StyleSheet.create({
   tableHeadRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
     paddingHorizontal: 16,
     paddingVertical: 11,
   },
   thCell: {
     fontSize: 11,
     fontWeight: '700',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
@@ -4112,7 +4859,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
     paddingHorizontal: 16,
     paddingVertical: 13,
   },
@@ -4120,53 +4867,54 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   campNameText: {
-    fontSize: 13,
+    fontSize: 15,
     fontWeight: '700',
-    color: COLORS.textDark,
-    marginBottom: 2,
+    color: colors.textPrimary,
+    marginBottom: 3,
+    letterSpacing: -0.2,
   },
   campPurposeText: {
-    fontSize: 11,
-    color: COLORS.textSecondary,
-    lineHeight: 15,
+    fontSize: 12,
+    color: colors.textSecondary,
+    lineHeight: 17,
   },
   targetPill: {
     flexDirection: 'row',
     alignItems: 'center',
     alignSelf: 'flex-start',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 5,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
     gap: 5,
   },
   targetPillText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   targetCountSub: {
     fontSize: 10,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   scheduleText: {
     fontSize: 11,
-    color: '#1D4ED8',
+    color: colors.isDark ? '#60A5FA' : '#1D4ED8',
     fontWeight: '600',
   },
   createdText: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   actionBtnSmall: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     borderRadius: 5,
     paddingHorizontal: 8,
     paddingVertical: 5,
@@ -4175,20 +4923,20 @@ const styles = StyleSheet.create({
   actionBtnSmallText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   actionBtnWarning: {
-    borderColor: COLORS.warningBorder,
-    backgroundColor: COLORS.warningBg,
+    borderColor: colors.warningBorder,
+    backgroundColor: colors.warningBg,
   },
   actionBtnWarningText: {
     fontSize: 11,
     fontWeight: '700',
-    color: COLORS.warningText,
+    color: colors.warningText,
   },
   actionBtnDanger: {
-    borderColor: '#FECACA',
-    backgroundColor: '#FEF2F2',
+    borderColor: colors.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FECACA',
+    backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2',
   },
 
   // Mobile Cards
@@ -4196,13 +4944,23 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   mobileCard: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 9,
+    borderColor: colors.border,
+    borderRadius: 10,
     padding: 14,
     marginBottom: 10,
-    gap: 8,
+    gap: 9,
+    ...Platform.select({
+      web: {
+        boxShadow: colors.isDark
+          ? '0 1px 3px 0 rgba(0, 0, 0, 0.3)'
+          : '0 1px 3px 0 rgba(15, 23, 42, 0.05), 0 1px 2px -1px rgba(15, 23, 42, 0.05)',
+      },
+      default: {
+        elevation: 2,
+      },
+    }),
   },
   mobileCardTop: {
     flexDirection: 'row',
@@ -4210,38 +4968,40 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   mobileCardTime: {
-    fontSize: 10,
-    color: COLORS.textMuted,
+    fontSize: 11,
+    color: colors.textMuted,
   },
   mobileMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
   mobileActionsRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    paddingTop: 8,
-    marginTop: 2,
+    borderTopColor: colors.border,
+    paddingTop: 10,
+    marginTop: 4,
+    alignItems: 'center',
   },
   mobileActionBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 5,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    gap: 4,
+    borderColor: colors.border,
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minHeight: 32,
+    gap: 5,
   },
   mobileActionBtnText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
 
   // Status Badge
@@ -4282,7 +5042,7 @@ const styles = StyleSheet.create({
   // Modal Structure
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    backgroundColor: colors.isDark ? 'rgba(0, 0, 0, 0.85)' : 'rgba(0, 0, 0, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
@@ -4293,35 +5053,37 @@ const styles = StyleSheet.create({
     bottom: 0,
     left: 0,
     right: 0,
+    zIndex: 1,
   },
   modalDialog: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.isDark ? '#101010' : colors.surfaceCard,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     width: '100%',
     maxWidth: 620,
     maxHeight: '90%',
     overflow: 'hidden',
+    zIndex: 10,
   },
   modalHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.isDark ? '#303030' : colors.border,
     paddingHorizontal: 18,
     paddingVertical: 14,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.isDark ? '#101010' : colors.surfaceSecondary,
   },
   modalTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   modalSubtitle: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   modalCloseBtn: {
@@ -4331,13 +5093,14 @@ const styles = StyleSheet.create({
   modalFormBody: {
     padding: 18,
     gap: 14,
+    backgroundColor: colors.isDark ? '#101010' : colors.surfaceCard,
   },
   errorBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.dangerBg,
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: colors.dangerBorder,
     borderRadius: 7,
     marginHorizontal: 18,
     marginTop: 14,
@@ -4347,7 +5110,7 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 12,
-    color: '#DC2626',
+    color: colors.dangerText,
     flex: 1,
     fontWeight: '500',
   },
@@ -4358,20 +5121,26 @@ const styles = StyleSheet.create({
   formLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   requiredStar: {
     color: '#DC2626',
   },
   inputField: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 7,
     paddingHorizontal: 12,
     paddingVertical: 8,
     fontSize: 13,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   textareaField: {
     height: 90,
@@ -4384,29 +5153,33 @@ const styles = StyleSheet.create({
   },
   charCountText: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
   },
 
   // Live WhatsApp Preview
   previewSection: {
-    backgroundColor: '#E5DDD5',
+    backgroundColor: colors.isDark ? '#111111' : '#E5DDD5',
     borderRadius: 9,
     padding: 12,
     marginBottom: 14,
+    borderWidth: colors.isDark ? 1 : 0,
+    borderColor: colors.isDark ? '#303030' : colors.border,
   },
   previewSectionTitle: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#3B4A54',
+    color: colors.textSecondary,
     marginBottom: 8,
   },
   waPreviewContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.isDark ? '#000000' : colors.chatCanvas,
     borderRadius: 8,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: colors.isDark ? '#303030' : colors.border,
   },
   waPreviewHeader: {
-    backgroundColor: COLORS.forestDark,
+    backgroundColor: colors.isDark ? '#181818' : COLORS.forestDark,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 10,
@@ -4425,7 +5198,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   waBubble: {
-    backgroundColor: '#DCF8C6',
+    backgroundColor: colors.isDark ? '#005C4B' : '#DCF8C6',
     alignSelf: 'flex-start',
     borderRadius: 8,
     borderTopLeftRadius: 0,
@@ -4436,7 +5209,7 @@ const styles = StyleSheet.create({
   },
   waBubbleText: {
     fontSize: 12,
-    color: COLORS.textDark,
+    color: colors.isDark ? '#FFFFFF' : '#111827',
     lineHeight: 16,
   },
   waBubbleFooter: {
@@ -4448,7 +5221,7 @@ const styles = StyleSheet.create({
   },
   waTime: {
     fontSize: 9,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
 
   // Delivery Mode Selector
@@ -4460,36 +5233,36 @@ const styles = StyleSheet.create({
   modeOptionCard: {
     flex: 1,
     minWidth: 160,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.isDark ? '#111111' : colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 8,
     padding: 12,
     gap: 4,
   },
   modeOptionCardSelected: {
-    borderColor: COLORS.emerald,
-    backgroundColor: COLORS.emeraldSubtle,
+    borderColor: colors.accent,
+    backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.12)' : colors.accentSubtle,
   },
   modeOptionTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   modeOptionTitleSelected: {
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   modeOptionDesc: {
     fontSize: 10,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 14,
   },
   scheduledInputsRow: {
     flexDirection: 'row',
     gap: 10,
-    backgroundColor: '#EFF6FF',
+    backgroundColor: colors.accentSubtle,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
+    borderColor: colors.accentBorder,
     borderRadius: 8,
     padding: 12,
     marginTop: 4,
@@ -4501,28 +5274,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-end',
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: colors.isDark ? '#303030' : colors.border,
     paddingHorizontal: 18,
     paddingVertical: 12,
     gap: 10,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.isDark ? '#101010' : colors.surfaceSecondary,
   },
   modalFooterBetween: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: colors.border,
     paddingHorizontal: 18,
     paddingVertical: 12,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     flexWrap: 'wrap',
     gap: 10,
   },
   btnCancel: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     borderRadius: 7,
     paddingHorizontal: 14,
     paddingVertical: 8,
@@ -4530,7 +5303,7 @@ const styles = StyleSheet.create({
   btnCancelText: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   btnSubmit: {
     backgroundColor: COLORS.emerald,
@@ -4548,9 +5321,9 @@ const styles = StyleSheet.create({
   btnSecondary: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     borderRadius: 7,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -4559,7 +5332,7 @@ const styles = StyleSheet.create({
   btnSecondaryText: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
 
   // Detail Modal Meta Grid
@@ -4572,23 +5345,23 @@ const styles = StyleSheet.create({
   detailMetaCard: {
     flex: 1,
     minWidth: 200,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 10,
   },
   detailMetaLabel: {
     fontSize: 10,
     fontWeight: '700',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
   detailMetaValue: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginTop: 2,
   },
 
@@ -4602,9 +5375,9 @@ const styles = StyleSheet.create({
     width: 48,
     height: 48,
     borderRadius: 24,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.dangerBg,
     borderWidth: 1,
-    borderColor: '#FCA5A5',
+    borderColor: colors.dangerBorder,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
@@ -4612,26 +5385,26 @@ const styles = StyleSheet.create({
   dialogTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 6,
   },
   dialogDesc: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 18,
     marginBottom: 12,
   },
   warningAlertBox: {
-    backgroundColor: COLORS.warningBg,
+    backgroundColor: colors.warningBg,
     borderWidth: 1,
-    borderColor: COLORS.warningBorder,
+    borderColor: colors.warningBorder,
     borderRadius: 7,
     padding: 10,
   },
   warningAlertText: {
     fontSize: 11,
-    color: COLORS.warningText,
+    color: colors.warningText,
     lineHeight: 16,
   },
   btnConfirmDelete: {
@@ -4654,15 +5427,15 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
   userRoleAdmin: {
-    backgroundColor: '#EEF2FF',
+    backgroundColor: colors.isDark ? 'rgba(99, 102, 241, 0.15)' : '#EEF2FF',
   },
   userRoleMember: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.isDark ? 'rgba(245, 158, 11, 0.15)' : '#FEF3C7',
   },
   userRoleText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#4338CA',
+    color: colors.isDark ? '#A5B4FC' : '#4338CA',
   },
 
   // Phase 3 Campaign Execution & Recipient Tracking Styles
@@ -4670,9 +5443,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#F0FDF4',
+    backgroundColor: colors.accentSubtle,
     borderWidth: 1,
-    borderColor: '#BBF7D0',
+    borderColor: colors.accentBorder,
     borderRadius: 7,
     paddingHorizontal: 12,
     paddingVertical: 9,
@@ -4680,12 +5453,12 @@ const styles = StyleSheet.create({
   senderPhoneText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#065F46',
+    color: colors.accent,
   },
   targetCountBanner: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 7,
@@ -4693,7 +5466,7 @@ const styles = StyleSheet.create({
   },
   targetCountBannerText: {
     fontSize: 11,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   reviewGrid: {
     flexDirection: 'row',
@@ -4716,14 +5489,14 @@ const styles = StyleSheet.create({
   reviewLabel: {
     fontSize: 10,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
     textAlign: 'center',
   },
   reviewDetailBox: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 12,
     gap: 8,
@@ -4736,17 +5509,17 @@ const styles = StyleSheet.create({
   },
   reviewDetailLabel: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   reviewDetailVal: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   reviewMessageBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 12,
     marginBottom: 12,
@@ -4754,18 +5527,18 @@ const styles = StyleSheet.create({
   reviewMessageLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 4,
   },
   reviewMessageText: {
     fontSize: 12,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     lineHeight: 18,
     fontStyle: 'italic',
   },
   reviewNoteText: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
     lineHeight: 16,
     marginTop: 4,
   },
@@ -4775,15 +5548,15 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     gap: 8,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    backgroundColor: COLORS.surfaceMuted,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
     flexWrap: 'wrap',
   },
   metricPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.surfaceSecondary,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 6,
@@ -4791,12 +5564,12 @@ const styles = StyleSheet.create({
   metricPillNum: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#334155',
+    color: colors.textSecondary,
   },
   metricPillLbl: {
     fontSize: 10,
     fontWeight: '500',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   recipientListItem: {
     flexDirection: 'row',
@@ -4804,17 +5577,17 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
     gap: 10,
   },
   recipientName: {
     fontSize: 13,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   recipientPhone: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 1,
   },
   recipientErrorText: {
@@ -4832,9 +5605,9 @@ const styles = StyleSheet.create({
   // STYLING PILIH PENERIMA & CHIPS
   // ----------------------------------------
   recipientCountBadge: {
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.accentBorder,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 6,
@@ -4842,12 +5615,12 @@ const styles = StyleSheet.create({
   recipientCountBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   recipientBoxCard: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.isDark ? '#111111' : colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 8,
     padding: 12,
     gap: 8,
@@ -4863,7 +5636,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: COLORS.forestDark,
+    backgroundColor: colors.accent,
     paddingHorizontal: 12,
     paddingVertical: 7,
     borderRadius: 6,
@@ -4886,9 +5659,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#FFFBEB',
+    backgroundColor: colors.warningBg,
     borderWidth: 1,
-    borderColor: '#FDE68A',
+    borderColor: colors.warningBorder,
     borderRadius: 6,
     padding: 10,
     marginTop: 4,
@@ -4896,7 +5669,7 @@ const styles = StyleSheet.create({
   emptyRecipientAlertText: {
     flex: 1,
     fontSize: 12,
-    color: '#B45309',
+    color: colors.warningText,
     lineHeight: 16,
   },
   chipsWrapper: {
@@ -4908,9 +5681,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceCard,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 16,
     paddingHorizontal: 9,
     paddingVertical: 4,
@@ -4919,17 +5692,17 @@ const styles = StyleSheet.create({
   contactChipName: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   contactChipPhone: {
     fontSize: 10,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   chipCloseBtn: {
     padding: 2,
   },
   chipMoreBadge: {
-    backgroundColor: '#E2E8F0',
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 16,
     paddingHorizontal: 8,
     paddingVertical: 4,
@@ -4938,7 +5711,7 @@ const styles = StyleSheet.create({
   chipMoreText: {
     fontSize: 10,
     fontWeight: '600',
-    color: '#475569',
+    color: colors.textSecondary,
   },
 
   // ----------------------------------------
@@ -4956,23 +5729,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#EAF6F0',
+    backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.15)' : '#EAF6F0',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#C1E6D3',
+    borderColor: colors.isDark ? 'rgba(45, 212, 191, 0.3)' : '#C1E6D3',
   },
   wibBadgeTopText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#059669',
+    color: colors.isDark ? '#34D399' : '#059669',
   },
   tzPillDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#16A36A',
+    backgroundColor: colors.isDark ? '#34D399' : '#16A36A',
   },
   schedulerSplitLayout: {
     flexDirection: 'row',
@@ -4984,9 +5757,9 @@ const styles = StyleSheet.create({
   schedulerCalCard: {
     flex: 1,
     minWidth: 280,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.isDark ? '#111111' : colors.surfaceCard,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 12,
     padding: 12,
     gap: 10,
@@ -4999,9 +5772,9 @@ const styles = StyleSheet.create({
   schedulerClockCard: {
     flex: 1,
     minWidth: 280,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.isDark ? '#111111' : colors.surfaceCard,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 12,
     padding: 12,
     gap: 10,
@@ -5020,21 +5793,21 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingBottom: 8,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: colors.isDark ? '#303030' : colors.border,
   },
   calNavArrowBtn: {
     width: 30,
     height: 30,
     borderRadius: 6,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.isDark ? '#303030' : colors.border,
   },
   calNavArrowBtnDisabled: {
-    backgroundColor: '#F8FAFC',
-    borderColor: '#F1F5F9',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     opacity: 0.4,
   },
   calHeaderTitleContainer: {
@@ -5045,12 +5818,12 @@ const styles = StyleSheet.create({
   calHeaderTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   calWeekdaysRow: {
     flexDirection: 'row',
     paddingVertical: 4,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 6,
   },
   calWeekdayColWrapper: {
@@ -5061,7 +5834,7 @@ const styles = StyleSheet.create({
   calWeekdayCol: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#64748B',
+    color: colors.textSecondary,
     textTransform: 'uppercase',
   },
   calDaysGrid: {
@@ -5095,7 +5868,7 @@ const styles = StyleSheet.create({
   calDayBtnInnerToday: {
     borderWidth: 1.5,
     borderColor: COLORS.emerald,
-    backgroundColor: '#EAF6F0',
+    backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.2)' : '#EAF6F0',
   },
   calDayBtnInnerDisabled: {
     opacity: 0.35,
@@ -5110,22 +5883,22 @@ const styles = StyleSheet.create({
   calDayBtnText: {
     fontSize: 12,
     fontWeight: '500',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   calDayBtnTextSelected: {
     color: '#FFFFFF',
     fontWeight: '700',
   },
   calDayBtnTextToday: {
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     fontWeight: '700',
   },
   calDayBtnTextDisabled: {
-    color: '#94A3B8',
+    color: colors.isDark ? '#404040' : '#94A3B8',
   },
   calDayBtnTextMuted: {
     fontSize: 12,
-    color: '#CBD5E1',
+    color: colors.isDark ? '#333333' : '#CBD5E1',
   },
   todaySmallDot: {
     position: 'absolute',
@@ -5139,17 +5912,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 6,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.isDark ? '#303030' : colors.border,
   },
   calSelectedDateText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     flex: 1,
   },
 
@@ -5165,9 +5938,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   clockTabSegment: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     borderWidth: 1.5,
-    borderColor: '#CBD5E1',
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 4,
@@ -5175,33 +5948,33 @@ const styles = StyleSheet.create({
     minWidth: 64,
   },
   clockTabSegmentActive: {
-    backgroundColor: '#EAF6F0',
-    borderColor: COLORS.emerald,
+    backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.15)' : colors.accentSubtle,
+    borderColor: colors.accent,
   },
   clockTabNumber: {
     fontSize: 22,
     fontWeight: '800',
-    color: '#475569',
+    color: colors.textSecondary,
   },
   clockTabNumberActive: {
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   clockTabSub: {
     fontSize: 9,
     fontWeight: '700',
-    color: '#64748B',
+    color: colors.textMuted,
     marginTop: 1,
   },
   clockTabSubActive: {
-    color: COLORS.emerald,
+    color: colors.accent,
   },
   clockColon: {
     fontSize: 22,
     fontWeight: '800',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   clockDialModeIndicator: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     borderRadius: 12,
     paddingHorizontal: 10,
     paddingVertical: 3,
@@ -5209,7 +5982,7 @@ const styles = StyleSheet.create({
   clockDialModeIndicatorText: {
     fontSize: 10,
     fontWeight: '600',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
 
   // Lingkaran Dial Jam Analog (260x260)
@@ -5217,9 +5990,9 @@ const styles = StyleSheet.create({
     width: 260,
     height: 260,
     borderRadius: 130,
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.isDark ? '#303030' : colors.border,
     position: 'relative',
     overflow: 'hidden',
   },
@@ -5231,7 +6004,7 @@ const styles = StyleSheet.create({
     left: 32,
     top: 32,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: colors.isDark ? '#262626' : colors.border,
   },
   dialTrackRingInner: {
     position: 'absolute',
@@ -5241,7 +6014,7 @@ const styles = StyleSheet.create({
     left: 68,
     top: 68,
     borderWidth: 1,
-    borderColor: '#F1F5F9',
+    borderColor: colors.isDark ? '#262626' : colors.border,
   },
   dialHandLine: {
     position: 'absolute',
@@ -5282,12 +6055,12 @@ const styles = StyleSheet.create({
   dialNumberText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#1E293B',
+    color: colors.textPrimary,
   },
   dialNumberTextInner: {
     fontSize: 11,
     fontWeight: '500',
-    color: '#64748B',
+    color: colors.isDark ? '#A0A0A0' : '#64748B',
   },
   dialNumberTextSelected: {
     color: '#FFFFFF',
@@ -5306,16 +6079,16 @@ const styles = StyleSheet.create({
   minuteAdjustLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textSecondary,
   },
   stepperBtnsGroup: {
     flexDirection: 'row',
     gap: 4,
   },
   stepperBtn: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -5323,7 +6096,7 @@ const styles = StyleSheet.create({
   stepperBtnText: {
     fontSize: 11,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   accessibleInputContainer: {
     width: '100%',
@@ -5333,13 +6106,13 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 4,
     borderTopWidth: 1,
-    borderTopColor: '#F1F5F9',
+    borderTopColor: colors.isDark ? '#303030' : colors.border,
     paddingTop: 8,
   },
   accessibleInputLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#64748B',
+    color: colors.textSecondary,
   },
   accessibleInputBoxRow: {
     flexDirection: 'row',
@@ -5347,25 +6120,31 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   accessibleDigitInput: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 6,
     width: 36,
     height: 28,
     textAlign: 'center',
     fontSize: 12,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     padding: 0,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   accessibleColon: {
     fontSize: 12,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   accessibleTzPill: {
-    backgroundColor: '#EAF6F0',
+    backgroundColor: colors.accentSubtle,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
@@ -5374,7 +6153,7 @@ const styles = StyleSheet.create({
   accessibleTzText: {
     fontSize: 10,
     fontWeight: '700',
-    color: COLORS.emerald,
+    color: colors.accent,
   },
   presetQuickRow: {
     width: '100%',
@@ -5384,33 +6163,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   presetPillBtn: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 4,
   },
   presetPillBtnActive: {
-    backgroundColor: '#EAF6F0',
-    borderColor: COLORS.emerald,
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accent,
     borderWidth: 1.5,
   },
   presetPillText: {
     fontSize: 11,
-    color: '#475569',
+    color: colors.textSecondary,
     fontWeight: '500',
   },
   presetPillTextActive: {
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     fontWeight: '700',
   },
 
   // Ringkasan Jadwal Terpadu
   scheduleSummaryBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     borderRadius: 10,
     padding: 12,
     gap: 8,
@@ -5431,16 +6210,16 @@ const styles = StyleSheet.create({
   scheduleSummaryTitle: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#64748B',
+    color: colors.textSecondary,
     letterSpacing: 0.5,
   },
   scheduleBadgeFuture: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: colors.isDark ? 'rgba(16, 185, 129, 0.15)' : '#ECFDF5',
     borderWidth: 1,
-    borderColor: '#A7F3D0',
+    borderColor: colors.isDark ? 'rgba(16, 185, 129, 0.35)' : '#A7F3D0',
     borderRadius: 6,
     paddingHorizontal: 7,
     paddingVertical: 3,
@@ -5454,15 +6233,15 @@ const styles = StyleSheet.create({
   scheduleBadgeTextFuture: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#059669',
+    color: colors.isDark ? '#34D399' : '#059669',
   },
   scheduleBadgeExpired: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2',
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: colors.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FECACA',
     borderRadius: 6,
     paddingHorizontal: 7,
     paddingVertical: 3,
@@ -5476,35 +6255,35 @@ const styles = StyleSheet.create({
   scheduleBadgeTextExpired: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#DC2626',
+    color: colors.isDark ? '#F87171' : '#DC2626',
   },
   scheduleSummaryFormatted: {
     fontSize: 14,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     lineHeight: 20,
   },
   scheduleOldNoticeCard: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 5,
   },
   scheduleOldNoticeText: {
     fontSize: 11,
-    color: '#64748B',
+    color: colors.textMuted,
     fontStyle: 'italic',
   },
   scheduleExpiredAlert: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2',
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: colors.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FECACA',
     borderRadius: 8,
     padding: 8,
   },
@@ -5519,9 +6298,9 @@ const styles = StyleSheet.create({
   // STYLING RINGKASAN KAMPANYE
   // ----------------------------------------
   summaryCardBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.isDark ? '#111111' : colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 8,
     padding: 12,
     gap: 8,
@@ -5535,14 +6314,14 @@ const styles = StyleSheet.create({
   summaryRowLabel: {
     fontSize: 12,
     fontWeight: '500',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     minWidth: 120,
   },
   summaryRowValue: {
     flex: 1,
     textAlign: 'right',
     fontSize: 12,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
 
   // ----------------------------------------
@@ -5554,16 +6333,16 @@ const styles = StyleSheet.create({
     paddingBottom: 8,
     gap: 8,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    backgroundColor: '#F8FAFC',
+    borderBottomColor: colors.isDark ? '#303030' : colors.border,
+    backgroundColor: colors.isDark ? '#101010' : colors.surfaceSecondary,
   },
   contactSearchInputBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.isDark ? '#181818' : colors.inputBg,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 6,
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -5571,27 +6350,33 @@ const styles = StyleSheet.create({
   contactSearchTextInput: {
     flex: 1,
     fontSize: 12,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     padding: 0,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   pickerFilterPill: {
     paddingHorizontal: 9,
     paddingVertical: 3.5,
     borderRadius: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
   },
   pickerFilterPillActive: {
-    backgroundColor: COLORS.emeraldSubtle,
-    borderColor: COLORS.emerald,
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accent,
   },
   pickerFilterPillText: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   pickerFilterPillTextActive: {
-    color: COLORS.forestDark,
+    color: colors.accent,
     fontWeight: '700',
   },
   pickerBulkActionBar: {
@@ -5604,9 +6389,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: colors.successBg,
     borderWidth: 1,
-    borderColor: '#A7F3D0',
+    borderColor: colors.successBorder,
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 5,
@@ -5614,20 +6399,20 @@ const styles = StyleSheet.create({
   btnBulkSelectAllText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#047857',
+    color: colors.successText,
   },
   btnBulkDeselect: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 5,
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
   },
   btnBulkDeselectText: {
     fontSize: 11,
-    color: '#64748B',
+    color: colors.textSecondary,
   },
   pickerCountIndicator: {
-    backgroundColor: COLORS.forestDark,
+    backgroundColor: colors.accent,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 10,
@@ -5640,6 +6425,7 @@ const styles = StyleSheet.create({
   contactListScrollView: {
     maxHeight: 380,
     paddingHorizontal: 16,
+    backgroundColor: colors.isDark ? '#101010' : colors.surfaceCard,
   },
   emptyContactsNotice: {
     alignItems: 'center',
@@ -5650,11 +6436,11 @@ const styles = StyleSheet.create({
   emptyContactsNoticeTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   emptyContactsNoticeDesc: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
   },
   contactPickerRow: {
@@ -5663,10 +6449,10 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingVertical: 9,
     borderBottomWidth: 1,
-    borderBottomColor: '#F1F5F9',
+    borderBottomColor: colors.isDark ? '#262626' : colors.border,
   },
   contactPickerRowChecked: {
-    backgroundColor: '#F0FDF4',
+    backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.15)' : colors.accentSubtle,
     marginHorizontal: -8,
     paddingHorizontal: 8,
     borderRadius: 6,
@@ -5679,63 +6465,63 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 4,
     borderWidth: 1.5,
-    borderColor: '#94A3B8',
+    borderColor: colors.borderStrong,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.inputBg,
   },
   checkboxBoxChecked: {
-    backgroundColor: '#047857',
-    borderColor: '#047857',
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
   },
   checkboxBoxDisabled: {
-    backgroundColor: '#E2E8F0',
-    borderColor: '#CBD5E1',
+    backgroundColor: colors.surfaceSecondary,
+    borderColor: colors.border,
   },
   disabledDash: {
     width: 8,
     height: 2,
-    backgroundColor: '#94A3B8',
+    backgroundColor: colors.textMuted,
     borderRadius: 1,
   },
   contactPickerAvatar: {
     width: 30,
     height: 30,
     borderRadius: 15,
-    backgroundColor: '#E0F2FE',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     justifyContent: 'center',
     alignItems: 'center',
   },
   contactPickerAvatarText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#0369A1',
+    color: colors.accent,
   },
   contactPickerName: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     maxWidth: 160,
   },
   contactPickerPhone: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 1,
   },
   contactPickerLabelBadge: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     paddingHorizontal: 5,
     paddingVertical: 1.5,
     borderRadius: 4,
   },
   contactPickerLabelText: {
     fontSize: 9,
-    color: '#475569',
+    color: colors.textPrimary,
   },
   badgeInvalidPhone: {
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.dangerBg,
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: colors.dangerBorder,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
@@ -5743,12 +6529,12 @@ const styles = StyleSheet.create({
   badgeInvalidPhoneText: {
     fontSize: 9,
     fontWeight: '600',
-    color: '#DC2626',
+    color: colors.dangerText,
   },
   badgeOptOut: {
-    backgroundColor: '#FFFBEB',
+    backgroundColor: colors.warningBg,
     borderWidth: 1,
-    borderColor: '#FDE68A',
+    borderColor: colors.warningBorder,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
@@ -5756,12 +6542,12 @@ const styles = StyleSheet.create({
   badgeOptOutText: {
     fontSize: 9,
     fontWeight: '600',
-    color: '#D97706',
+    color: colors.warningText,
   },
   badgeReady: {
-    backgroundColor: '#ECFDF5',
+    backgroundColor: colors.successBg,
     borderWidth: 1,
-    borderColor: '#A7F3D0',
+    borderColor: colors.successBorder,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 4,
@@ -5769,7 +6555,7 @@ const styles = StyleSheet.create({
   badgeReadyText: {
     fontSize: 9,
     fontWeight: '600',
-    color: '#047857',
+    color: colors.successText,
   },
   contactPickerFooter: {
     flexDirection: 'row',
@@ -5778,20 +6564,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    backgroundColor: '#F8FAFC',
+    borderTopColor: colors.isDark ? '#303030' : colors.border,
+    backgroundColor: colors.isDark ? '#101010' : colors.surfaceSecondary,
   },
   pickerFooterSummaryText: {
     fontSize: 12,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   pickerFooterSubText: {
     fontSize: 10,
-    color: '#059669',
+    color: colors.accent,
     marginTop: 1,
   },
   btnConfirmContactSelection: {
-    backgroundColor: COLORS.forestDark,
+    backgroundColor: colors.accent,
     paddingHorizontal: 14,
     paddingVertical: 8,
     borderRadius: 6,

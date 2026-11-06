@@ -414,6 +414,38 @@ export async function persistInboundWhatsAppMessage(
       .eq('id', convId)
       .eq('organization_id', orgId);
 
+    // 5. Terbitkan notifikasi pesan masuk ke public.notifications untuk seluruh anggota aktif organisasi
+    try {
+      const { data: members } = await supabase
+        .from('organization_members')
+        .select('user_id')
+        .eq('organization_id', orgId);
+
+      if (members && members.length > 0) {
+        const snippet = textBody.length > 80 ? textBody.slice(0, 80) + '...' : textBody;
+        const cleanMessageId = params.providerMessageId || params.messageId || msgRow.id;
+        const notifRows = members.map((m: { user_id: string }) => ({
+          organization_id: orgId,
+          user_id: m.user_id,
+          title: 'Pesan WhatsApp Baru Masuk',
+          body: `${senderName} (+${senderPhone}): "${snippet}"`,
+          category: 'chat',
+          reference_type: 'conversation',
+          reference_id: convId,
+          dedup_key: `chat:inbound:${cleanMessageId}`,
+          is_read: false,
+          created_at: sentAtIso,
+        }));
+
+        await supabase
+          .from('notifications')
+          .upsert(notifRows, { onConflict: 'organization_id,user_id,dedup_key', ignoreDuplicates: true });
+      }
+    } catch (notifErr: any) {
+      // Non-fatal: tidak menggagalkan alur penyimpanan pesan
+      console.warn('[Supabase Notification] Gagal membuat notifikasi pesan masuk:', notifErr?.message || notifErr);
+    }
+
     return {
       contactId: contact.id,
       conversationId: convId,

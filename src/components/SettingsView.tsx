@@ -1,17 +1,25 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
   View,
+  ScrollView,
   TouchableOpacity,
   TextInput,
   Image,
   Platform,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { COLORS, AppIcon } from '../theme';
+import { COLORS, AppIcon, SHADOWS, BACKGROUNDS, useTheme, ThemePalette } from '../theme';
 import { normalizePhoneNumber } from './ContactsView';
+import {
+  notifySystemEvent,
+  notifyOrgProfileUpdated,
+  notifyConfigUpdated,
+} from '../lib/notifications';
+import { formatErrorUserMessage } from '../lib/errorHandler';
 import {
   WhatsAppWorkerStatus,
   checkWorkerHealth,
@@ -22,26 +30,20 @@ import {
   getWorkerBaseUrl,
   syncProfileToWorker,
 } from '../lib/whatsappClient';
+import {
+  InstitutionType,
+  INSTITUTION_TYPES,
+  ALL_INSTITUTION_TYPES,
+  CANONICAL_INSTITUTION_TYPES,
+  normalizeInstitutionType,
+  getEffectiveContactLabels,
+  getLabelColors,
+  DEFAULT_LABELS_BY_TYPE,
+  isFollowUpStatus,
+} from '../lib/organizationTypes';
 
-// ==========================================
-// TIPE DATA & MODEL PENGATURAN ORGANISASI
-// ==========================================
-export type InstitutionType =
-  | 'Pesantren / Islamic Boarding School'
-  | 'Sekolah Islam Terpadu'
-  | 'Madrasah (MI/MTs/MA)'
-  | 'Yayasan Pendidikan'
-  | 'Lembaga Kursus & Pelatihan'
-  | 'Institusi Lainnya';
-
-export const INSTITUTION_TYPES: InstitutionType[] = [
-  'Pesantren / Islamic Boarding School',
-  'Sekolah Islam Terpadu',
-  'Madrasah (MI/MTs/MA)',
-  'Yayasan Pendidikan',
-  'Lembaga Kursus & Pelatihan',
-  'Institusi Lainnya',
-];
+// Re-export untuk backward compatibility dengan modul lain
+export { InstitutionType, INSTITUTION_TYPES, CANONICAL_INSTITUTION_TYPES };
 
 export interface FaqItem {
   id: string;
@@ -58,6 +60,7 @@ export interface OrgProfile {
   logoUrl?: string;
   studentCount: string;
   staffCount: string;
+  customLabels?: string[];
 
   // B. Informasi Kontak & Lokasi
   escalationPhone: string;
@@ -97,11 +100,12 @@ export const DEFAULT_ORG_PROFILE: OrgProfile = {
   // A. Identitas
   orgName: '',
   shortName: '',
-  institutionType: 'Pesantren / Islamic Boarding School',
+  institutionType: 'Pesantren',
   officialDescription: '',
   logoUrl: '',
   studentCount: '',
   staffCount: '',
+  customLabels: [],
 
   // B. Kontak & Lokasi
   escalationPhone: '',
@@ -143,27 +147,18 @@ export function isValidHttpUrl(stringVal: string): boolean {
 // ==========================================
 // TRANSLASI ERROR & PEMETAAN DATA SUPABASE
 // ==========================================
+// Helper translasi error Supabase ke Bahasa Indonesia
 export function translateSettingsError(errMsg: string): string {
-  const lower = errMsg.toLowerCase();
-  if (lower.includes('permission denied') || lower.includes('policy') || lower.includes('42501')) {
-    return 'Akses ditolak oleh kebijakan keamanan (RLS). Hanya pemilik (owner) atau admin organisasi yang diizinkan memperbarui profil lembaga.';
-  }
-  if (lower.includes('foreign key') || lower.includes('violates foreign key')) {
-    return 'Organisasi tidak valid atau tidak ditemukan dalam database.';
-  }
-  if (lower.includes('network') || lower.includes('fetch') || lower.includes('connection')) {
-    return 'Gagal terhubung ke Supabase. Periksa koneksi internet Anda.';
-  }
-  return errMsg || 'Terjadi kendala saat memproses profil organisasi.';
+  return formatErrorUserMessage(errMsg, { entityName: 'profil organisasi', isWorker: false });
 }
 
 export function mapDbToOrgProfile(row: any, fallbackOrgId?: string): OrgProfile {
   if (!row) return DEFAULT_ORG_PROFILE;
 
   const validInstType = (
-    INSTITUTION_TYPES.includes(row.institution_type)
+    row.institution_type && ALL_INSTITUTION_TYPES.includes(row.institution_type)
       ? row.institution_type
-      : DEFAULT_ORG_PROFILE.institutionType
+      : normalizeInstitutionType(row.institution_type)
   ) as InstitutionType;
 
   return {
@@ -174,6 +169,7 @@ export function mapDbToOrgProfile(row: any, fallbackOrgId?: string): OrgProfile 
     logoUrl: row.logo_url ?? DEFAULT_ORG_PROFILE.logoUrl,
     studentCount: row.student_count ?? DEFAULT_ORG_PROFILE.studentCount,
     staffCount: row.staff_count ?? DEFAULT_ORG_PROFILE.staffCount,
+    customLabels: Array.isArray(row.custom_labels) ? row.custom_labels : [],
     escalationPhone: row.escalation_phone ?? DEFAULT_ORG_PROFILE.escalationPhone,
     officialEmail: row.official_email ?? DEFAULT_ORG_PROFILE.officialEmail,
     address: row.address ?? DEFAULT_ORG_PROFILE.address,
@@ -213,7 +209,7 @@ export interface SettingsViewProps {
 
 export function SettingsView({
   organizationId,
-  currentUserId: _currentUserId,
+  currentUserId,
   orgProfile: externalProfile,
   setOrgProfile: externalSetProfile,
   isDesktop = true,
@@ -227,9 +223,9 @@ export function SettingsView({
   // Supabase Organization State (Single Source of Truth)
   const effectiveOrgId = organizationId;
 
-  // Role Pengguna Saat Ini dalam Organisasi
+  // Role Pengguna Saat Ini dalam Organisasi (Deny-by-default: null/loading tidak berhak sebagai Owner/Admin)
   const [userRole, setUserRole] = useState<'owner' | 'admin' | 'member' | string | null>(null);
-  const isOwnerOrAdmin = userRole === 'owner' || userRole === 'admin' || userRole === null;
+  const isOwnerOrAdmin = userRole === 'owner' || userRole === 'admin';
 
   // Status Asinkron
   const [isLoading, setIsLoading] = useState<boolean>(Boolean(organizationId));
@@ -248,6 +244,7 @@ export function SettingsView({
 
   // Local Form Draft State (mencegah data loss saat batal)
   const [draft, setDraft] = useState<OrgProfile>(orgProfile);
+  const [showVerifyToken, setShowVerifyToken] = useState(false);
   const [prevOrgProfile, setPrevOrgProfile] = useState<OrgProfile>(orgProfile);
   if (orgProfile !== prevOrgProfile) {
     setPrevOrgProfile(orgProfile);
@@ -262,12 +259,95 @@ export function SettingsView({
   const [waStatus, setWaStatus] = useState<WhatsAppWorkerStatus | null>(null);
   const [waQrDataUrl, setWaQrDataUrl] = useState<string | null>(null);
   const [waQrGeneratedAt, setWaQrGeneratedAt] = useState<string | null>(null);
+  const [waCountdown, setWaCountdown] = useState<number>(0);
   const [isWaLoading, setIsWaLoading] = useState<boolean>(false);
   const [waActionMessage, setWaActionMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
   const isRefreshingRef = useRef<boolean>(false);
+  const waStatusRef = useRef<WhatsAppWorkerStatus | null>(null);
+  waStatusRef.current = waStatus;
 
-  // Fungsi refresh status & QR dari worker lokal
-  const refreshWhatsAppWorkerState = useCallback(async (showLoading = true) => {
+  // Countdown timer per detik untuk masa aktif QR
+  useEffect(() => {
+    if (waCountdown <= 0) return;
+    const interval = setInterval(() => {
+      setWaCountdown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [waCountdown]);
+
+  // Label Kustom Management State
+  const [newLabelInput, setNewLabelInput] = useState<string>('');
+  const [labelError, setLabelError] = useState<string | null>(null);
+
+  const activeEffectiveLabels = useMemo(() => {
+    return getEffectiveContactLabels(draft.customLabels, draft.institutionType);
+  }, [draft.customLabels, draft.institutionType]);
+
+  const handleAddCustomLabel = () => {
+    if (!isOwnerOrAdmin) {
+      setLabelError('Akses dibatasi: Hanya Owner atau Admin yang dapat menambahkan label.');
+      return;
+    }
+    const trimmed = newLabelInput.trim();
+    if (!trimmed) {
+      setLabelError('Nama label tidak boleh kosong.');
+      return;
+    }
+    if (trimmed.length > 30) {
+      setLabelError('Nama label maksimal 30 karakter.');
+      return;
+    }
+    if (isFollowUpStatus(trimmed)) {
+      setLabelError('Nama label tidak boleh menggunakan nama status operasional sistem ("Belum Dihubungi", "Sudah Dihubungi", "Perlu Follow-up").');
+      return;
+    }
+    if (activeEffectiveLabels.some((l) => l.toLowerCase() === trimmed.toLowerCase())) {
+      setLabelError(`Label "${trimmed}" sudah terdaftar.`);
+      return;
+    }
+
+    const currentList = draft.customLabels && draft.customLabels.length > 0
+      ? [...draft.customLabels]
+      : [...activeEffectiveLabels];
+
+    currentList.push(trimmed);
+    setDraft({ ...draft, customLabels: currentList });
+    setNewLabelInput('');
+    setLabelError(null);
+  };
+
+  const handleRemoveCustomLabel = (labelToRemove: string) => {
+    if (!isOwnerOrAdmin) {
+      setLabelError('Akses dibatasi: Hanya Owner atau Admin yang dapat menghapus label.');
+      return;
+    }
+    if (labelToRemove.toLowerCase() === 'umum') {
+      setLabelError('Label "Umum" tidak dapat dihapus sebagai jangkar sistem.');
+      return;
+    }
+    const currentList = draft.customLabels && draft.customLabels.length > 0
+      ? [...draft.customLabels]
+      : [...activeEffectiveLabels];
+
+    const updated = currentList.filter((l) => l.toLowerCase() !== labelToRemove.toLowerCase());
+    setDraft({ ...draft, customLabels: updated });
+    setLabelError(null);
+  };
+
+  const handleResetLabelsToDefault = () => {
+    if (!isOwnerOrAdmin) {
+      setLabelError('Akses dibatasi: Hanya Owner atau Admin yang dapat mereset preset label.');
+      return;
+    }
+    const canonical = normalizeInstitutionType(draft.institutionType);
+    const presets = DEFAULT_LABELS_BY_TYPE[canonical];
+    setDraft({ ...draft, customLabels: [...presets] });
+    setLabelError(null);
+  };
+
+  // Fungsi refresh status & QR dari worker lokal (dioptimalkan 1 round-trip)
+  const refreshWhatsAppWorkerState = useCallback(async (showLoading = false) => {
     if (isRefreshingRef.current) return;
     isRefreshingRef.current = true;
     if (showLoading) {
@@ -276,26 +356,21 @@ export function SettingsView({
     }
 
     try {
-      // 1. Health check
-      const health = await checkWorkerHealth();
-      if (!health.ok) {
-        setWorkerOnline(false);
-        setWaStatus(null);
-        setWaQrDataUrl(null);
-        if (showLoading) {
-          setWaActionMessage({
-            type: 'error',
-            text: health.error || 'Worker Baileys lokal belum aktif pada loopback 127.0.0.1:4000.',
-          });
-        }
-        return;
-      }
-
-      setWorkerOnline(true);
-
-      // 2. Ambil status terkini
+      // 1. Ambil status terkini langsung via getWhatsAppStatus (1 round-trip efisien)
       const statusRes = await getWhatsAppStatus();
       if (!statusRes.success || !statusRes.data) {
+        const errorMsg = statusRes.error || '';
+        const isOffline =
+          errorMsg.includes('tidak terjangkau') ||
+          errorMsg.includes('offline') ||
+          errorMsg.includes('belum dikonfigurasi') ||
+          errorMsg.includes('ECONNREFUSED');
+        setWorkerOnline(!isOffline);
+        if (isOffline) {
+          setWaStatus(null);
+          setWaQrDataUrl(null);
+          setWaCountdown(0);
+        }
         if (showLoading) {
           setWaActionMessage({
             type: 'error',
@@ -305,27 +380,54 @@ export function SettingsView({
         return;
       }
 
+      setWorkerOnline(true);
       const currentStatus = statusRes.data;
       setWaStatus(currentStatus);
 
-      // 3. Ambil QR jika statusnya siap dipindai / butuh scan / qr_expired
-      if (
+      // Sinkronisasi countdown
+      if (typeof currentStatus.countdownSeconds === 'number') {
+        setWaCountdown(currentStatus.countdownSeconds);
+      }
+
+      // 2. Evaluasi QR data URL langsung dari status worker (tanpa extra round-trip jika cached)
+      if (currentStatus.status === 'connected') {
+        setWaQrDataUrl(null);
+        setWaCountdown(0);
+      } else if (currentStatus.qrDataUrl) {
+        setWaQrDataUrl(currentStatus.qrDataUrl);
+        setWaQrGeneratedAt(
+          currentStatus.qrGeneratedAt
+            ? new Date(currentStatus.qrGeneratedAt).toLocaleTimeString()
+            : new Date().toLocaleTimeString()
+        );
+      } else if (
         currentStatus.status === 'qr_ready' ||
         currentStatus.status === 'initiating' ||
         currentStatus.status === 'disconnected' ||
         currentStatus.status === 'qr_expired'
       ) {
+        // Fallback mengambil QR hanya jika belum ada di payload status
         const qrRes = await getWhatsAppQr();
         if (qrRes.success && qrRes.qrDataUrl) {
           setWaQrDataUrl(qrRes.qrDataUrl);
-          setWaQrGeneratedAt(qrRes.generatedAt ? new Date(qrRes.generatedAt).toLocaleTimeString() : new Date().toLocaleTimeString());
+          setWaQrGeneratedAt(
+            qrRes.generatedAt
+              ? new Date(qrRes.generatedAt).toLocaleTimeString()
+              : new Date().toLocaleTimeString()
+          );
+          if (typeof qrRes.countdownSeconds === 'number') {
+            setWaCountdown(qrRes.countdownSeconds);
+          }
         } else if (qrRes.status === 'connected') {
           setWaQrDataUrl(null);
+          setWaCountdown(0);
         }
-      } else if (currentStatus.status === 'connected') {
-        setWaQrDataUrl(null);
       }
     } catch (err: any) {
+      setWorkerOnline(false);
+      setWaStatus(null);
+      setWaQrDataUrl(null);
+      setWaCountdown(0);
       if (showLoading) {
         setWaActionMessage({
           type: 'error',
@@ -338,32 +440,42 @@ export function SettingsView({
     }
   }, []);
 
-  // Ambil data WhatsApp otomatis dan jalankan polling berkala saat tab gateway aktif
+  // Polling adaptif saat tab gateway aktif:
+  // - Poll 1200ms saat menunggu QR / initiating / connecting / qr_expired
+  // - Poll 2000ms saat qr_ready untuk menjaga validitas QR & deteksi scan ponsel
+  // - Berhenti otomatis ketika status 'connected' atau tab ditinggalkan
   useEffect(() => {
     let isCancelled = false;
-    let pollInterval: any = null;
+    let pollTimer: any = null;
 
     if (activeTab === 'gateway') {
-      // Initial fetch with spinner
-      const initialTimer = setTimeout(() => {
-        if (!isCancelled) {
-          void refreshWhatsAppWorkerState(true);
-        }
-      }, 0);
+      void refreshWhatsAppWorkerState(true);
 
-      // Polling setiap 4 detik tanpa spinner agar QR Code selalu ter-refresh otomatis
-      pollInterval = setInterval(() => {
-        if (!isCancelled) {
-          void refreshWhatsAppWorkerState(false);
+      const scheduleNextPoll = () => {
+        if (isCancelled) return;
+        const currentWa = waStatusRef.current;
+
+        // Berhenti polling jika sudah terhubung
+        if (currentWa?.status === 'connected') {
+          return;
         }
-      }, 4000);
+
+        // 1200ms untuk inisialisasi cepat, 2000ms saat QR sedang aktif
+        const intervalMs = currentWa?.status === 'qr_ready' ? 2000 : 1200;
+
+        pollTimer = setTimeout(async () => {
+          if (!isCancelled) {
+            await refreshWhatsAppWorkerState(false);
+            scheduleNextPoll();
+          }
+        }, intervalMs);
+      };
+
+      scheduleNextPoll();
 
       return () => {
         isCancelled = true;
-        clearTimeout(initialTimer);
-        if (pollInterval) {
-          clearInterval(pollInterval);
-        }
+        if (pollTimer) clearTimeout(pollTimer);
       };
     }
   }, [activeTab, refreshWhatsAppWorkerState]);
@@ -389,18 +501,48 @@ export function SettingsView({
     }
   };
 
-  const handleDisconnectWhatsApp = async (deleteSession: boolean) => {
+  const handleDisconnectWhatsApp = async (deleteSession = true) => {
     setIsWaLoading(true);
     setWaActionMessage(null);
+    setShowLogoutConfirm(false);
     const res = await disconnectWhatsApp(deleteSession);
     if (res.success) {
+      setWaStatus(null);
+      setWaQrDataUrl(null);
+      if (setOrgProfile) {
+        setOrgProfile((prev) => ({
+          ...prev,
+          isGatewayConnected: false,
+        }));
+      }
+      const revocation = res.data?.revocationStatus;
+      let feedbackText = res.message || 'Koneksi WhatsApp berhasil diputuskan.';
+      let feedbackType: 'success' | 'info' = 'success';
+
+      if (deleteSession) {
+        if (revocation === 'confirmed') {
+          feedbackType = 'success';
+          feedbackText = 'Koneksi WhatsApp diputuskan, otorisasi perangkat terverifikasi dicabut oleh server WhatsApp, dan seluruh berkas kredensial lokal telah dimusnahkan.';
+        } else if (revocation && revocation.startsWith('unverified')) {
+          feedbackType = 'info';
+          feedbackText = 'Berkas sesi lokal telah dihapus dan socket dimatikan. Namun pencabutan dari server WhatsApp belum terverifikasi secara online (socket offline/timeout). Silakan periksa menu Perangkat Tertaut di WhatsApp ponsel Anda dan pilih Keluar jika perangkat masih tercantum.';
+        }
+      }
+
       setWaActionMessage({
-        type: 'success',
-        text: deleteSession
-          ? 'Koneksi WhatsApp diputuskan dan seluruh file sesi lokal dihapus.'
-          : 'Koneksi WhatsApp berhasil diputuskan.',
+        type: feedbackType,
+        text: feedbackText,
       });
       await refreshWhatsAppWorkerState(false);
+
+      if (effectiveOrgId && currentUserId) {
+        notifyConfigUpdated({
+          organizationId: effectiveOrgId,
+          userId: currentUserId,
+          configName: 'WhatsApp Gateway',
+          detail: 'Sesi perangkat WhatsApp diputuskan dan kredensial dimusnahkan.',
+        }).catch((e) => console.warn('[SettingsView] Gagal membuat notifikasi disconnect gateway:', e));
+      }
     } else {
       setWaActionMessage({
         type: 'error',
@@ -534,8 +676,8 @@ export function SettingsView({
   const handleSaveSettings = async () => {
     if (isSaving) return;
 
-    // Batasi akses: Hanya Owner atau Admin yang boleh mengubah profil lembaga
-    if (userRole === 'member') {
+    // Batasi akses: Hanya Owner atau Admin yang boleh mengubah profil lembaga (deny-by-default)
+    if (!isOwnerOrAdmin) {
       setFeedback({
         type: 'error',
         text: 'Akses dibatasi: Hanya Owner atau Admin organisasi yang berhak menyimpan perubahan profil lembaga.',
@@ -605,7 +747,7 @@ export function SettingsView({
     setFeedback(null);
 
     try {
-      const payload = {
+      const payload: Record<string, any> = {
         organization_id: effectiveOrgId,
         org_name: draft.orgName.trim(),
         short_name: draft.shortName.trim(),
@@ -629,14 +771,34 @@ export function SettingsView({
         operational_days: draft.operationalDays.trim(),
         facilities: draft.facilities.trim(),
         faqs: draft.faqs,
+        custom_labels: draft.customLabels && draft.customLabels.length > 0 ? draft.customLabels : [],
         updated_at: new Date().toISOString(),
       };
 
-      const { data, error } = await supabase
+      let saveResult = await supabase
         .from('organization_profiles')
         .upsert(payload, { onConflict: 'organization_id' })
         .select()
         .single();
+
+      let customLabelsSkipped = false;
+      // Graceful fallback jika kolom custom_labels belum dieksekusi di database cloud
+      if (
+        saveResult.error &&
+        (saveResult.error.code === '42703' ||
+          saveResult.error.message?.toLowerCase().includes('custom_labels'))
+      ) {
+        console.warn('Kolom custom_labels belum tersedia di database, menyimpan field profil lainnya.');
+        customLabelsSkipped = true;
+        delete payload.custom_labels;
+        saveResult = await supabase
+          .from('organization_profiles')
+          .upsert(payload, { onConflict: 'organization_id' })
+          .select()
+          .single();
+      }
+
+      const { data, error } = saveResult;
 
       if (error) {
         console.error('Error saving organization profile:', error.message);
@@ -653,6 +815,14 @@ export function SettingsView({
         setDraft(saved);
       } else {
         setOrgProfile(draft);
+      }
+
+      if (effectiveOrgId && currentUserId) {
+        notifyOrgProfileUpdated({
+          organizationId: effectiveOrgId,
+          userId: currentUserId,
+          orgName: draft.orgName,
+        }).catch((e) => console.warn('[SettingsView] Gagal membuat notifikasi sistem:', e));
       }
 
       // Sinkronkan profil terbaru ke Worker Staging WhatsApp (fire-and-forget)
@@ -683,8 +853,10 @@ export function SettingsView({
       });
 
       setFeedback({
-        type: 'success',
-        text: 'Menyimpan profil ke database... Menyinkronkan ke chatbot WhatsApp...',
+        type: customLabelsSkipped ? 'info' : 'success',
+        text: customLabelsSkipped
+          ? 'Profil tersimpan. Catatan: Kolom label kontak kustom belum tersedia di database server.'
+          : 'Menyimpan profil ke database... Menyinkronkan ke chatbot WhatsApp...',
       });
 
       setTimeout(() => {
@@ -715,7 +887,7 @@ export function SettingsView({
 
   // Pulihkan ke Default
   const handleRestoreDefault = () => {
-    if (userRole === 'member') {
+    if (!isOwnerOrAdmin) {
       setFeedback({
         type: 'error',
         text: 'Akses dibatasi: Hanya Owner atau Admin organisasi yang berhak mereset pengaturan profil lembaga.',
@@ -766,15 +938,17 @@ export function SettingsView({
     }));
   };
 
+  const { isDark, colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   return (
-    <View style={styles.pageContainer}>
+    <View style={[styles.pageContainer, { backgroundColor: colors.background }]}>
       {/* ========================================== */}
       {/* 1. HEADER HALAMAN                          */}
       {/* ========================================== */}
-      <View style={styles.pageHeader}>
+      <View style={[styles.pageHeader, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
         <View style={styles.headerLeft}>
           <View style={styles.headerTitleRow}>
-            <Text style={styles.headerTitle}>Pengaturan Organisasi</Text>
+            <Text style={[styles.headerTitle, { color: colors.textPrimary }]}>Pengaturan Organisasi</Text>
             <View style={styles.statusPill}>
               <View style={styles.statusDotActive} />
               <Text style={styles.statusPillText}>Sesi Aktif</Text>
@@ -785,7 +959,7 @@ export function SettingsView({
               </View>
             )}
           </View>
-          <Text style={styles.headerSubtitle}>
+          <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
             Kelola identitas resmi institusi, kontak, basis pendaftaran, jam layanan CS, dan integrasi WhatsApp gateway.
           </Text>
         </View>
@@ -797,7 +971,7 @@ export function SettingsView({
             onPress={handleDiscardChanges}
             disabled={isSaving || isLoading}
           >
-            <AppIcon name="refresh" size={14} color={COLORS.forestDark} />
+            <AppIcon name="refresh" size={14} color={colors.textPrimary} />
             <Text style={styles.btnSecondaryText}>Batalkan Editan</Text>
           </TouchableOpacity>
 
@@ -856,10 +1030,10 @@ export function SettingsView({
               feedback.type === 'success'
                 ? '#047857'
                 : feedback.type === 'error'
-                ? '#B91C1C'
-                : feedback.type === 'warning'
-                ? '#92400E'
-                : '#1D4ED8'
+                  ? '#B91C1C'
+                  : feedback.type === 'warning'
+                    ? '#92400E'
+                    : '#1D4ED8'
             }
           />
           <Text
@@ -892,45 +1066,50 @@ export function SettingsView({
         </TouchableOpacity>
       </View>
 
-      {/* ========================================== */}
       {/* 2. TAB NAVIGASI PENGATURAN                 */}
       {/* ========================================== */}
-      <View style={styles.tabNavRow}>
-        {[
-          { key: 'identity', label: '1. Identitas Institusi', icon: 'users' },
-          { key: 'contact', label: '2. Kontak & Lokasi', icon: 'phone' },
-          { key: 'admission', label: '3. Pendaftaran & Biaya', icon: 'calendar' },
-          { key: 'operational', label: '4. Operasional & FAQ', icon: 'clock' },
-          { key: 'gateway', label: '5. Gateway WhatsApp API', icon: 'link' },
-        ].map((tab) => {
-          const isSelected = activeTab === tab.key;
-          return (
-            <TouchableOpacity
-              key={tab.key}
-              style={[styles.tabBtn, isSelected && styles.tabBtnActive]}
-              onPress={() => setActiveTab(tab.key as SettingsTab)}
-            >
-              <AppIcon
-                name={tab.icon as any}
-                size={14}
-                color={isSelected ? COLORS.emerald : COLORS.textSecondary}
-              />
-              <Text style={[styles.tabBtnText, isSelected && styles.tabBtnTextActive]}>
-                {tab.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
+      <View style={[styles.tabNavContainer, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.tabNavContent}
+        >
+          {[
+            { key: 'identity', label: '1. Identitas Institusi', icon: 'users' },
+            { key: 'contact', label: '2. Kontak & Lokasi', icon: 'phone' },
+            { key: 'admission', label: '3. Pendaftaran & Biaya', icon: 'calendar' },
+            { key: 'operational', label: '4. Operasional & FAQ', icon: 'clock' },
+            { key: 'gateway', label: '5. Gateway WhatsApp API', icon: 'link' },
+          ].map((tab) => {
+            const isSelected = activeTab === tab.key;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={[styles.tabBtn, isSelected && styles.tabBtnActive]}
+                onPress={() => setActiveTab(tab.key as SettingsTab)}
+              >
+                <AppIcon
+                  name={tab.icon as any}
+                  size={14}
+                  color={isSelected ? COLORS.emerald : COLORS.textSecondary}
+                />
+                <Text style={[styles.tabBtnText, isSelected && styles.tabBtnTextActive]}>
+                  {tab.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
       </View>
 
       {/* ========================================== */}
       {/* 3. KONTEN TAB: IDENTITAS INSTITUSI         */}
       {/* ========================================== */}
       {activeTab === 'identity' && (
-        <View style={styles.cardContainer}>
+        <View style={[styles.cardContainer, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
           <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Identitas & Profil Resmi Institusi</Text>
-            <Text style={styles.cardSubtitle}>
+            <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Identitas & Profil Resmi Institusi</Text>
+            <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
               Informasi dasar yang mengidentifikasi lembaga pendidikan atau yayasan Anda di seluruh ekosistem WABiz.
             </Text>
           </View>
@@ -938,42 +1117,54 @@ export function SettingsView({
           <View style={styles.formGrid}>
             {/* Nama Resmi Institusi */}
             <View style={styles.formColFull}>
-              <Text style={styles.formLabel}>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>
                 Nama Resmi Institusi / Lembaga <Text style={styles.requiredStar}>*</Text>
               </Text>
               <TextInput
-                style={styles.formInput}
+                style={[styles.formInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.inputBorder }]}
                 value={draft.orgName}
                 onChangeText={(val) => setDraft({ ...draft, orgName: val })}
                 placeholder="Contoh: Pesantren Modern Darul Ulum WABiz"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
             {/* Nama Singkat */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>Nama Singkat / Brand Populer</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Nama Singkat / Brand Populer</Text>
               <TextInput
-                style={styles.formInput}
+                style={[styles.formInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.inputBorder }]}
                 value={draft.shortName}
                 onChangeText={(val) => setDraft({ ...draft, shortName: val })}
                 placeholder="Contoh: Darul Ulum WABiz"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
               />
               <Text style={styles.formHelper}>Digunakan pada sapaan ringkas dan footer pesan.</Text>
             </View>
 
-            {/* Jenis Institusi */}
-            <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>Jenis Institusi Pendidikan</Text>
+            {/* Jenis Organisasi / Sektor Bisnis */}
+            <View style={styles.formColFull}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, flexWrap: 'wrap', gap: 6 }}>
+                <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Jenis Organisasi / Sektor Bisnis</Text>
+                <Text style={styles.formHelper}>Mendukung Pesantren, Sekolah, UMKM, Kos-kosan, Jasa, Layanan Kesehatan, dan Yayasan</Text>
+              </View>
               <View style={styles.radioPickerGrid}>
-                {INSTITUTION_TYPES.map((type) => {
-                  const isSelected = draft.institutionType === type;
+                {CANONICAL_INSTITUTION_TYPES.map((type) => {
+                  const isSelected = normalizeInstitutionType(draft.institutionType) === type;
                   return (
                     <TouchableOpacity
                       key={type}
                       style={[styles.radioCard, isSelected && styles.radioCardActive]}
-                      onPress={() => setDraft({ ...draft, institutionType: type })}
+                      onPress={() => {
+                        const newPresets = DEFAULT_LABELS_BY_TYPE[type];
+                        const shouldUpdateLabels = !draft.customLabels || draft.customLabels.length === 0;
+                        setDraft({
+                          ...draft,
+                          institutionType: type,
+                          customLabels: shouldUpdateLabels ? [...newPresets] : draft.customLabels,
+                        });
+                      }}
+                      activeOpacity={0.7}
                     >
                       <View style={[styles.radioDot, isSelected && styles.radioDotActive]}>
                         {isSelected && <View style={styles.radioDotInner} />}
@@ -987,9 +1178,105 @@ export function SettingsView({
               </View>
             </View>
 
+            {/* Segmentasi & Label Kontak Organisasi */}
+            <View style={styles.formColFull}>
+              <View style={{ backgroundColor: colors.surfaceSecondary, borderWidth: 1, borderColor: colors.border, borderRadius: 10, padding: 14 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <AppIcon name="users" size={16} color={colors.accent} />
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: colors.textPrimary }}>
+                      Segmentasi & Label Kontak ({activeEffectiveLabels.length} Label Aktif)
+                    </Text>
+                  </View>
+                  {isOwnerOrAdmin && (
+                    <TouchableOpacity
+                      style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, backgroundColor: colors.surfaceCard, borderWidth: 1, borderColor: colors.border }}
+                      onPress={handleResetLabelsToDefault}
+                      activeOpacity={0.7}
+                    >
+                      <AppIcon name="refresh" size={12} color={colors.accent} />
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: colors.accent }}>
+                        Reset ke Label Default Sektor
+                      </Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 12 }}>
+                  Setiap organisasi memiliki label kontak sendiri untuk mengelompokkan pelanggan dan memfilter target kampanye siaran WhatsApp.
+                </Text>
+
+                {/* Badge Daftar Label Aktif */}
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                  {activeEffectiveLabels.map((lbl) => {
+                    const lblColors = getLabelColors(lbl, isDark);
+                    const isUmum = lbl.toLowerCase() === 'umum';
+                    return (
+                      <View
+                        key={lbl}
+                        style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          gap: 6,
+                          paddingVertical: 5,
+                          paddingHorizontal: 10,
+                          borderRadius: 20,
+                          backgroundColor: lblColors.bg,
+                          borderWidth: 1,
+                          borderColor: lblColors.border,
+                        }}
+                      >
+                        <Text style={{ fontSize: 12, fontWeight: '600', color: lblColors.text }}>{lbl}</Text>
+                        {isOwnerOrAdmin && !isUmum && (
+                          <TouchableOpacity
+                            onPress={() => handleRemoveCustomLabel(lbl)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                            accessibilityLabel={`Hapus label ${lbl}`}
+                          >
+                            <AppIcon name="close" size={11} color={lblColors.text} />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+
+                {/* Form Tambah Label Cepat */}
+                {isOwnerOrAdmin && (
+                  <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                    <TextInput
+                      style={[styles.formInput, { flex: 1, height: 38, paddingVertical: 6, fontSize: 13 }]}
+                      placeholder="Tambah label baru (misal: Reseller VIP, Pelanggan Baru)..."
+                      placeholderTextColor={colors.textPlaceholder}
+                      value={newLabelInput}
+                      onChangeText={(val) => {
+                        setNewLabelInput(val);
+                        if (labelError) setLabelError(null);
+                      }}
+                      onSubmitEditing={handleAddCustomLabel}
+                      returnKeyType="done"
+                    />
+                    <TouchableOpacity
+                      style={[styles.btnPrimary, { height: 38, paddingHorizontal: 14 }]}
+                      onPress={handleAddCustomLabel}
+                      activeOpacity={0.8}
+                    >
+                      <AppIcon name="plus" size={13} color="#FFFFFF" />
+                      <Text style={{ fontSize: 12, fontWeight: '700', color: '#FFFFFF' }}>+ Tambah</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {labelError && (
+                  <Text style={{ fontSize: 12, color: '#DC2626', marginTop: 6, fontWeight: '500' }}>
+                    {labelError}
+                  </Text>
+                )}
+              </View>
+            </View>
+
             {/* Deskripsi Resmi */}
             <View style={styles.formColFull}>
-              <Text style={styles.formLabel}>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>
                 Deskripsi Resmi Institusi <Text style={styles.requiredStar}>*</Text>
               </Text>
               <TextInput
@@ -997,7 +1284,7 @@ export function SettingsView({
                 value={draft.officialDescription}
                 onChangeText={(val) => setDraft({ ...draft, officialDescription: val })}
                 placeholder="Jelaskan visi, misi, fokus pendidikan, serta nilai unggulan institusi..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 multiline
                 numberOfLines={3}
               />
@@ -1006,40 +1293,100 @@ export function SettingsView({
               </Text>
             </View>
 
-            {/* Jumlah Santri / Siswa */}
+            {/* Kapasitas / Santri / Klien */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>Jumlah Santri / Siswa Aktif</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>
+                {['Pesantren', 'Sekolah Islam Terpadu', 'Madrasah'].includes(normalizeInstitutionType(draft.institutionType))
+                  ? 'Jumlah Santri / Siswa Aktif'
+                  : normalizeInstitutionType(draft.institutionType) === 'UMKM / Bisnis Retail'
+                    ? 'Estimasi Pelanggan / Member Aktif'
+                    : normalizeInstitutionType(draft.institutionType) === 'Properti / Kos-kosan'
+                      ? 'Jumlah Kamar / Penghuni Aktif'
+                      : normalizeInstitutionType(draft.institutionType) === 'Jasa / Konsultan'
+                        ? 'Jumlah Klien / Prospek Aktif'
+                        : normalizeInstitutionType(draft.institutionType) === 'Layanan Kesehatan'
+                          ? 'Kapasitas Pasien / Tempat Tidur'
+                          : normalizeInstitutionType(draft.institutionType) === 'Yayasan / Organisasi Umum'
+                            ? 'Jumlah Donatur / Penerima Manfaat'
+                            : 'Kapasitas / Anggota Aktif'}
+              </Text>
               <TextInput
-                style={styles.formInput}
+                style={[styles.formInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.inputBorder }]}
                 value={draft.studentCount}
                 onChangeText={(val) => setDraft({ ...draft, studentCount: val })}
-                placeholder="Contoh: 1.250 Santri (Putra & Putri)"
-                placeholderTextColor={COLORS.textMuted}
+                placeholder={
+                  ['Pesantren', 'Sekolah Islam Terpadu', 'Madrasah'].includes(normalizeInstitutionType(draft.institutionType))
+                    ? 'Contoh: 1.250 Santri (Putra & Putri)'
+                    : normalizeInstitutionType(draft.institutionType) === 'UMKM / Bisnis Retail'
+                      ? 'Contoh: 1.500+ Pelanggan Terdaftar'
+                      : normalizeInstitutionType(draft.institutionType) === 'Properti / Kos-kosan'
+                        ? 'Contoh: 48 Kamar (36 Terisi)'
+                        : normalizeInstitutionType(draft.institutionType) === 'Jasa / Konsultan'
+                          ? 'Contoh: 120 Klien Korporasi'
+                          : normalizeInstitutionType(draft.institutionType) === 'Layanan Kesehatan'
+                            ? 'Contoh: 50 Tempat Tidur Rawat Inap'
+                            : normalizeInstitutionType(draft.institutionType) === 'Yayasan / Organisasi Umum'
+                              ? 'Contoh: 500+ Donatur Tetap'
+                              : 'Contoh: 200+ Anggota'
+                }
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
-            {/* Jumlah Tenaga Pengajar */}
+            {/* Jumlah Tenaga Pengajar / Staf */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>Jumlah Tenaga Pendidik & Staf</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>
+                {normalizeInstitutionType(draft.institutionType) === 'Pesantren'
+                  ? 'Jumlah Tenaga Pendidik & Asatidz'
+                  : ['Sekolah Islam Terpadu', 'Madrasah'].includes(normalizeInstitutionType(draft.institutionType))
+                    ? 'Jumlah Tenaga Pendidik & Guru'
+                    : normalizeInstitutionType(draft.institutionType) === 'UMKM / Bisnis Retail'
+                      ? 'Jumlah Karyawan & Staf Toko'
+                      : normalizeInstitutionType(draft.institutionType) === 'Properti / Kos-kosan'
+                        ? 'Staf Pengelola & Keamanan'
+                        : normalizeInstitutionType(draft.institutionType) === 'Jasa / Konsultan'
+                          ? 'Jumlah Konsultan & Staf Ahli'
+                          : normalizeInstitutionType(draft.institutionType) === 'Layanan Kesehatan'
+                            ? 'Jumlah Dokter & Tenaga Medis'
+                            : normalizeInstitutionType(draft.institutionType) === 'Yayasan / Organisasi Umum'
+                              ? 'Jumlah Pengurus & Relawan'
+                              : 'Jumlah Tim / Karyawan'}
+              </Text>
               <TextInput
-                style={styles.formInput}
+                style={[styles.formInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.inputBorder }]}
                 value={draft.staffCount}
                 onChangeText={(val) => setDraft({ ...draft, staffCount: val })}
-                placeholder="Contoh: 85 Asatidz & Staf Profesional"
-                placeholderTextColor={COLORS.textMuted}
+                placeholder={
+                  normalizeInstitutionType(draft.institutionType) === 'Pesantren'
+                    ? 'Contoh: 85 Asatidz & Staf Profesional'
+                    : ['Sekolah Islam Terpadu', 'Madrasah'].includes(normalizeInstitutionType(draft.institutionType))
+                      ? 'Contoh: 60 Guru & Tenaga Kependidikan'
+                      : normalizeInstitutionType(draft.institutionType) === 'UMKM / Bisnis Retail'
+                        ? 'Contoh: 15 Karyawan & Pramuniaga'
+                        : normalizeInstitutionType(draft.institutionType) === 'Properti / Kos-kosan'
+                          ? 'Contoh: 4 Staf Kebersihan & Penjaga'
+                          : normalizeInstitutionType(draft.institutionType) === 'Jasa / Konsultan'
+                            ? 'Contoh: 12 Konsultan & Associate'
+                            : normalizeInstitutionType(draft.institutionType) === 'Layanan Kesehatan'
+                              ? 'Contoh: 20 Dokter & 35 Perawat'
+                              : normalizeInstitutionType(draft.institutionType) === 'Yayasan / Organisasi Umum'
+                                ? 'Contoh: 25 Pengurus & 100 Relawan'
+                                : 'Contoh: 10 Staf Profesional'
+                }
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
             {/* URL Logo Institusi */}
             <View style={styles.formColFull}>
-              <Text style={styles.formLabel}>URL Logo Institusi (Opsional)</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>URL Logo Institusi (Opsional)</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                 <TextInput
                   style={[styles.formInput, { flex: 1 }, !isLogoValid && styles.inputInvalid]}
                   value={draft.logoUrl ?? ''}
                   onChangeText={(val) => setDraft({ ...draft, logoUrl: val })}
                   placeholder="https://domain.com/logo.png"
-                  placeholderTextColor={COLORS.textMuted}
+                  placeholderTextColor={colors.textPlaceholder}
                   autoCapitalize="none"
                 />
                 {draft.logoUrl && isLogoValid ? (
@@ -1071,10 +1418,10 @@ export function SettingsView({
       {/* 4. KONTEN TAB: KONTAK & LOKASI             */}
       {/* ========================================== */}
       {activeTab === 'contact' && (
-        <View style={styles.cardContainer}>
+        <View style={[styles.cardContainer, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
           <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Informasi Kontak Resmi & Lokasi</Text>
-            <Text style={styles.cardSubtitle}>
+            <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Informasi Kontak Resmi & Lokasi</Text>
+            <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
               Kontak resmi yang dipublikasikan kepada orang tua dan dijadikan rujukan eskalasi chatbot.
             </Text>
           </View>
@@ -1082,15 +1429,15 @@ export function SettingsView({
           <View style={styles.formGrid}>
             {/* Nomor WhatsApp Resmi */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>
                 Nomor Telepon / WhatsApp Resmi <Text style={styles.requiredStar}>*</Text>
               </Text>
               <TextInput
-                style={styles.formInput}
+                style={[styles.formInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.inputBorder }]}
                 value={draft.escalationPhone}
                 onChangeText={(val) => setDraft({ ...draft, escalationPhone: val })}
                 placeholder="+62 812-3456-7890"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 keyboardType="phone-pad"
               />
               <Text style={styles.formHelper}>
@@ -1100,13 +1447,13 @@ export function SettingsView({
 
             {/* Email Resmi */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>Alamat Email Resmi Institusi</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Alamat Email Resmi Institusi</Text>
               <TextInput
-                style={styles.formInput}
+                style={[styles.formInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.inputBorder }]}
                 value={draft.officialEmail}
                 onChangeText={(val) => setDraft({ ...draft, officialEmail: val })}
                 placeholder="info@darululum-wabiz.sch.id"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 keyboardType="email-address"
                 autoCapitalize="none"
               />
@@ -1114,7 +1461,7 @@ export function SettingsView({
 
             {/* Alamat Lengkap */}
             <View style={styles.formColFull}>
-              <Text style={styles.formLabel}>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>
                 Alamat Lengkap Kampus / Yayasan <Text style={styles.requiredStar}>*</Text>
               </Text>
               <TextInput
@@ -1122,7 +1469,7 @@ export function SettingsView({
                 value={draft.address}
                 onChangeText={(val) => setDraft({ ...draft, address: val })}
                 placeholder="Jl. Raya Pesantren No. 45, Cisarua, Bogor, Jawa Barat 16750"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 multiline
                 numberOfLines={2}
               />
@@ -1130,13 +1477,13 @@ export function SettingsView({
 
             {/* URL Google Maps */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>Tautan Navigasi Google Maps</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Tautan Navigasi Google Maps</Text>
               <TextInput
                 style={[styles.formInput, !isMapsValid && styles.inputInvalid]}
                 value={draft.mapsUrl}
                 onChangeText={(val) => setDraft({ ...draft, mapsUrl: val })}
                 placeholder="https://maps.google.com/?q=..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 autoCapitalize="none"
               />
               {!isMapsValid && (
@@ -1146,13 +1493,13 @@ export function SettingsView({
 
             {/* Situs Web Resmi */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>URL Situs Web Resmi</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>URL Situs Web Resmi</Text>
               <TextInput
                 style={[styles.formInput, !isWebValid && styles.inputInvalid]}
                 value={draft.websiteUrl}
                 onChangeText={(val) => setDraft({ ...draft, websiteUrl: val })}
                 placeholder="https://darululum-wabiz.sch.id"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 autoCapitalize="none"
               />
               {!isWebValid && (
@@ -1174,10 +1521,10 @@ export function SettingsView({
       {/* 5. KONTEN TAB: PENDAFTARAN & BIAYA         */}
       {/* ========================================== */}
       {activeTab === 'admission' && (
-        <View style={styles.cardContainer}>
+        <View style={[styles.cardContainer, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
           <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Informasi Pendaftaran Santri / Siswa Baru (PSB)</Text>
-            <Text style={styles.cardSubtitle}>
+            <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Informasi Pendaftaran Santri / Siswa Baru (PSB)</Text>
+            <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
               Sumber rujukan pendaftaran online, skema biaya, dan persyaratan berkas yang diakses otomatis oleh bot.
             </Text>
           </View>
@@ -1185,13 +1532,13 @@ export function SettingsView({
           <View style={styles.formGrid}>
             {/* URL Formulir Pendaftaran */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>URL Formulir Pendaftaran Online (PSB)</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>URL Formulir Pendaftaran Online (PSB)</Text>
               <TextInput
                 style={[styles.formInput, !isRegValid && styles.inputInvalid]}
                 value={draft.registrationUrl}
                 onChangeText={(val) => setDraft({ ...draft, registrationUrl: val })}
                 placeholder="https://psb.darululum-wabiz.sch.id"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 autoCapitalize="none"
               />
               {!isRegValid && (
@@ -1201,13 +1548,13 @@ export function SettingsView({
 
             {/* URL Informasi Lengkap PSB */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>URL Halaman Brosur & Informasi Lengkap</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>URL Halaman Brosur & Informasi Lengkap</Text>
               <TextInput
                 style={[styles.formInput, !isInfoValid && styles.inputInvalid]}
                 value={draft.infoPageUrl}
                 onChangeText={(val) => setDraft({ ...draft, infoPageUrl: val })}
                 placeholder="https://darululum-wabiz.sch.id/informasi-psb"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 autoCapitalize="none"
               />
               {!isInfoValid && (
@@ -1217,25 +1564,25 @@ export function SettingsView({
 
             {/* Kontak Petugas PSB */}
             <View style={styles.formColFull}>
-              <Text style={styles.formLabel}>Kontak Petugas / Panitia Pendaftaran</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Kontak Petugas / Panitia Pendaftaran</Text>
               <TextInput
-                style={styles.formInput}
+                style={[styles.formInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.inputBorder }]}
                 value={draft.admissionContact}
                 onChangeText={(val) => setDraft({ ...draft, admissionContact: val })}
                 placeholder="Contoh: Ustadzah Siti Aisyah (+62 812-3456-7890)"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
             {/* Periode / Jadwal Pendaftaran */}
             <View style={styles.formColFull}>
-              <Text style={styles.formLabel}>Periode & Jadwal Gelombang Pendaftaran</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Periode & Jadwal Gelombang Pendaftaran</Text>
               <TextInput
                 style={[styles.formInput, styles.formTextArea]}
                 value={draft.admissionSchedule}
                 onChangeText={(val) => setDraft({ ...draft, admissionSchedule: val })}
                 placeholder="Gelombang 1 dibuka mulai 1 Oktober s.d. 30 November..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 multiline
                 numberOfLines={2}
               />
@@ -1243,13 +1590,13 @@ export function SettingsView({
 
             {/* Informasi Biaya Resmi */}
             <View style={styles.formColFull}>
-              <Text style={styles.formLabel}>Informasi Biaya Pendaftaran & Pendidikan (SPP)</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Informasi Biaya Pendaftaran & Pendidikan (SPP)</Text>
               <TextInput
                 style={[styles.formInput, styles.formTextArea]}
                 value={draft.tuitionInfo}
                 onChangeText={(val) => setDraft({ ...draft, tuitionInfo: val })}
                 placeholder="Cantumkan biaya formulir, uang pangkal, atau arahan verifikasi langsung ke CS Keuangan..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 multiline
                 numberOfLines={3}
               />
@@ -1260,13 +1607,13 @@ export function SettingsView({
 
             {/* Persyaratan Pendaftaran */}
             <View style={styles.formColFull}>
-              <Text style={styles.formLabel}>Persyaratan Berkas & Seleksi Masuk</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Persyaratan Berkas & Seleksi Masuk</Text>
               <TextInput
                 style={[styles.formInput, styles.formTextArea]}
                 value={draft.requirements}
                 onChangeText={(val) => setDraft({ ...draft, requirements: val })}
                 placeholder="Fotokopi KK, Akta Kelahiran, pas foto, tes baca Al-Qur'an..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 multiline
                 numberOfLines={3}
               />
@@ -1286,10 +1633,10 @@ export function SettingsView({
       {/* 6. KONTEN TAB: OPERASIONAL & FAQ           */}
       {/* ========================================== */}
       {activeTab === 'operational' && (
-        <View style={styles.cardContainer}>
+        <View style={[styles.cardContainer, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
           <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Jam Operasional, Fasilitas & FAQ Lembaga</Text>
-            <Text style={styles.cardSubtitle}>
+            <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Jam Operasional, Fasilitas & FAQ Lembaga</Text>
+            <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
               Informasi waktu pelayanan, sarana kampus, dan daftar tanya-jawab resmi untuk memperkaya respon otomatis bot.
             </Text>
           </View>
@@ -1297,37 +1644,37 @@ export function SettingsView({
           <View style={styles.formGrid}>
             {/* Jam Layanan CS */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>Jam Layanan Customer Service</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Jam Layanan Customer Service</Text>
               <TextInput
-                style={styles.formInput}
+                style={[styles.formInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.inputBorder }]}
                 value={draft.csHours}
                 onChangeText={(val) => setDraft({ ...draft, csHours: val })}
                 placeholder="Senin - Sabtu: 08.00 - 16.00 WIB"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
             {/* Hari Operasional */}
             <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-              <Text style={styles.formLabel}>Hari Operasional Kantor / Kampus</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Hari Operasional Kantor / Kampus</Text>
               <TextInput
-                style={styles.formInput}
+                style={[styles.formInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.inputBorder }]}
                 value={draft.operationalDays}
                 onChangeText={(val) => setDraft({ ...draft, operationalDays: val })}
                 placeholder="Senin s.d. Sabtu (Ahad Libur)"
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
               />
             </View>
 
             {/* Fasilitas Institusi */}
             <View style={styles.formColFull}>
-              <Text style={styles.formLabel}>Informasi Fasilitas Kampus & Asrama</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Informasi Fasilitas Kampus & Asrama</Text>
               <TextInput
                 style={[styles.formInput, styles.formTextArea]}
                 value={draft.facilities}
                 onChangeText={(val) => setDraft({ ...draft, facilities: val })}
                 placeholder="Masjid 2 lantai, asrama ber-AC, lab komputer, lapangan panahan..."
-                placeholderTextColor={COLORS.textMuted}
+                placeholderTextColor={colors.textPlaceholder}
                 multiline
                 numberOfLines={2}
               />
@@ -1335,7 +1682,7 @@ export function SettingsView({
 
             {/* FAQ Manager */}
             <View style={styles.formColFull}>
-              <Text style={styles.formLabel}>FAQ & Informasi Resmi Tambahan</Text>
+              <Text style={[styles.formLabel, { color: colors.textPrimary }]}>FAQ & Informasi Resmi Tambahan</Text>
               <Text style={styles.formHelper}>
                 Pertanyaan dan jawaban resmi di bawah ini membantu asisten bot menjawab pertanyaan umum wali santri tanpa halusinasi.
               </Text>
@@ -1365,18 +1712,18 @@ export function SettingsView({
               <View style={styles.addFaqBox}>
                 <Text style={styles.addFaqTitle}>+ Tambah Butir FAQ Baru</Text>
                 <TextInput
-                  style={styles.formInput}
+                  style={[styles.formInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.inputBorder }]}
                   value={newFaqQ}
                   onChangeText={setNewFaqQ}
                   placeholder="Ketik pertanyaan (contoh: 'Apakah santri boleh bawa HP?')..."
-                  placeholderTextColor={COLORS.textMuted}
+                  placeholderTextColor={colors.textPlaceholder}
                 />
                 <TextInput
                   style={[styles.formInput, styles.formTextArea]}
                   value={newFaqA}
                   onChangeText={setNewFaqA}
                   placeholder="Ketik jawaban resmi lembaga..."
-                  placeholderTextColor={COLORS.textMuted}
+                  placeholderTextColor={colors.textPlaceholder}
                   multiline
                   numberOfLines={2}
                 />
@@ -1424,16 +1771,16 @@ export function SettingsView({
                   waActionMessage.type === 'success'
                     ? 'check'
                     : waActionMessage.type === 'error'
-                    ? 'alert'
-                    : 'refresh'
+                      ? 'alert'
+                      : 'refresh'
                 }
                 size={16}
                 color={
                   waActionMessage.type === 'success'
                     ? '#047857'
                     : waActionMessage.type === 'error'
-                    ? '#B91C1C'
-                    : '#1D4ED8'
+                      ? '#B91C1C'
+                      : '#1D4ED8'
                 }
               />
               <Text
@@ -1450,22 +1797,24 @@ export function SettingsView({
           )}
 
           {/* KARTU 1: KONEKSI WHATSAPP QR (BAILEYS STAGING WORKER) */}
-          <View style={styles.cardContainer}>
+          <View style={[styles.cardContainer, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
             <View style={styles.cardHeader}>
               <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                 <View style={{ flex: 1, minWidth: 240 }}>
-                  <Text style={styles.cardTitle}>Koneksi WhatsApp Staging (QR Pairing Baileys)</Text>
-                  <Text style={styles.cardSubtitle}>
+                  <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Koneksi WhatsApp Staging</Text>
+                  <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
                     Tautkan nomor WhatsApp uji coba melalui scan QR Code perangkat tertaut (Multi-Device).
                   </Text>
                 </View>
                 <View
                   style={[
                     styles.gatewayStatusPill,
-                    workerOnline === false && { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
-                    waStatus?.status === 'connected' && { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' },
-                    waStatus?.status === 'qr_ready' && { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' },
-                    waStatus?.status === 'qr_expired' && { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
+                    workerOnline === false && { backgroundColor: colors.dangerBg, borderColor: colors.dangerBorder },
+                    waStatus?.status === 'connected' && { backgroundColor: colors.successBg, borderColor: colors.successBorder },
+                    waStatus?.status === 'qr_ready' && { backgroundColor: colors.accentSubtle, borderColor: colors.accentBorder },
+                    (waStatus?.status === 'connecting' || waStatus?.status === 'initiating') && { backgroundColor: colors.warningBg, borderColor: colors.warningBorder },
+                    waStatus?.status === 'qr_expired' && { backgroundColor: colors.warningBg, borderColor: colors.warningBorder },
+                    waStatus?.status === 'error' && { backgroundColor: colors.dangerBg, borderColor: colors.dangerBorder },
                   ]}
                 >
                   <View
@@ -1474,8 +1823,9 @@ export function SettingsView({
                       workerOnline === false && { backgroundColor: '#DC2626' },
                       waStatus?.status === 'connected' && { backgroundColor: '#059669' },
                       waStatus?.status === 'qr_ready' && { backgroundColor: '#2563EB' },
-                      waStatus?.status === 'connecting' && { backgroundColor: '#D97706' },
+                      (waStatus?.status === 'connecting' || waStatus?.status === 'initiating') && { backgroundColor: '#D97706' },
                       waStatus?.status === 'qr_expired' && { backgroundColor: '#F59E0B' },
+                      waStatus?.status === 'error' && { backgroundColor: '#DC2626' },
                     ]}
                   />
                   <Text
@@ -1484,22 +1834,28 @@ export function SettingsView({
                       workerOnline === false && { color: '#B91C1C' },
                       waStatus?.status === 'connected' && { color: '#047857' },
                       waStatus?.status === 'qr_ready' && { color: '#1D4ED8' },
+                      (waStatus?.status === 'connecting' || waStatus?.status === 'initiating') && { color: '#B45309' },
                       waStatus?.status === 'qr_expired' && { color: '#B45309' },
+                      waStatus?.status === 'error' && { color: '#B91C1C' },
                     ]}
                   >
                     {workerOnline === false
                       ? 'Worker Offline'
                       : waStatus?.status === 'connected'
-                      ? 'Terhubung'
-                      : waStatus?.status === 'qr_ready'
-                      ? 'Siap Dipindai'
-                      : waStatus?.status === 'connecting' || waStatus?.status === 'initiating'
-                      ? 'Menghubungkan...'
-                      : waStatus?.status === 'qr_expired'
-                      ? 'Memperbarui QR...'
-                      : waStatus?.status === 'logged_out'
-                      ? 'Sesi Dicabut'
-                      : 'Belum Terhubung'}
+                        ? 'Terhubung'
+                        : waStatus?.status === 'qr_ready'
+                          ? 'QR Tersedia'
+                          : waStatus?.status === 'connecting'
+                            ? 'Menghubungkan...'
+                            : waStatus?.status === 'initiating'
+                              ? 'Menunggu QR...'
+                              : waStatus?.status === 'qr_expired'
+                                ? 'QR Kedaluwarsa'
+                                : waStatus?.status === 'error'
+                                  ? 'Gagal'
+                                  : waStatus?.status === 'logged_out'
+                                    ? 'Sesi Dicabut'
+                                    : 'Belum Terhubung'}
                   </Text>
                 </View>
               </View>
@@ -1520,19 +1876,46 @@ export function SettingsView({
                 <View style={styles.qrWarningBox}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                     <AppIcon name="alert" size={16} color="#DC2626" />
-                    <Text style={styles.qrWarningTitle}>Worker Staging Lokal Belum Berjalan</Text>
-                  </View>
-                  <Text style={styles.qrWarningDesc}>
-                    Layanan Baileys worker belum aktif pada loopback <Text style={{ fontWeight: '700' }}>http://127.0.0.1:4000</Text>. Untuk menghubungkan WhatsApp melalui QR, jalankan perintah ini di jendela terminal komputer Anda:
-                  </Text>
-                  <View style={styles.mockMonoInput}>
-                    <Text style={[styles.monoText, { color: COLORS.forestDark, fontWeight: '700' }]}>
-                      cd server && npm start
+                    <Text style={styles.qrWarningTitle}>
+                      {getWorkerBaseUrl() ? 'Worker Staging Belum Berjalan' : 'Worker Gateway Belum Terhubung'}
                     </Text>
                   </View>
-                  <Text style={{ fontSize: 11, color: '#64748B' }}>
-                    {'Setelah worker aktif, tekan tombol "Segarkan Status & QR" di bawah.'}
+                  <Text style={styles.qrWarningDesc}>
+                    {getWorkerBaseUrl() ? (
+                      <>
+                        Layanan Baileys worker belum aktif pada URL{' '}
+                        <Text style={{ fontWeight: '700' }}>{getWorkerBaseUrl()}</Text>. Untuk menghubungkan WhatsApp melalui QR, jalankan perintah ini di jendela terminal komputer Anda:
+                      </>
+                    ) : (
+                      'Layanan WhatsApp worker belum dikonfigurasi atau belum terhubung ke URL publik (EXPO_PUBLIC_WHATSAPP_WORKER_URL). Pada mode demo web statis, gateway pengiriman WhatsApp ditangguhkan demi keamanan.'
+                    )}
                   </Text>
+                  {getWorkerBaseUrl() ? (
+                    <>
+                      <View style={styles.mockMonoInput}>
+                        <Text style={[styles.monoText, { color: COLORS.forestDark, fontWeight: '700' }]}>
+                          cd server && npm start
+                        </Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 4 }}>
+                        <TouchableOpacity
+                          style={styles.btnRetryWorker}
+                          onPress={() => refreshWhatsAppWorkerState(true)}
+                          activeOpacity={0.8}
+                        >
+                          <AppIcon name="refresh" size={13} color="#FFFFFF" />
+                          <Text style={styles.btnRetryWorkerText}>Coba Lagi</Text>
+                        </TouchableOpacity>
+                        <Text style={{ fontSize: 11, color: '#64748B' }}>
+                          Tekan "Coba Lagi" setelah worker aktif.
+                        </Text>
+                      </View>
+                    </>
+                  ) : (
+                    <Text style={{ fontSize: 11, color: '#64748B' }}>
+                      Modul profil, kontak, tim, dan dashboard tetap dapat diakses secara mandiri melalui Supabase.
+                    </Text>
+                  )}
                 </View>
               )}
 
@@ -1578,10 +1961,35 @@ export function SettingsView({
                 waQrDataUrl &&
                 !isWaLoading && (
                   <View style={styles.qrBox}>
-                    <Text style={styles.qrInstructionTitle}>Pindai QR Code untuk Menautkan Nomor</Text>
-                    <Text style={styles.qrInstructionDesc}>
-                      Buka aplikasi WhatsApp di <Text style={{ fontWeight: '700' }}>ponsel uji coba</Text> &gt; menu Titik Tiga / Pengaturan &gt; <Text style={{ fontWeight: '700' }}>Perangkat Tertaut</Text> &gt; <Text style={{ fontWeight: '700' }}>Tautkan Perangkat</Text>, lalu scan QR di bawah:
-                    </Text>
+                    <View style={styles.qrHeaderRow}>
+                      <Text style={styles.qrInstructionTitle}>Hubungkan WhatsApp</Text>
+                      <View
+                        style={[
+                          styles.gatewayStatusPill,
+                          {
+                            backgroundColor:
+                              waStatus?.status === 'qr_ready' ? colors.accentSubtle : colors.warningBg,
+                            borderColor:
+                              waStatus?.status === 'qr_ready' ? colors.accentBorder : colors.warningBorder,
+                          },
+                        ]}
+                      >
+                        <View
+                          style={[
+                            styles.gatewayStatusDot,
+                            { backgroundColor: waStatus?.status === 'qr_ready' ? '#2563EB' : '#F59E0B' },
+                          ]}
+                        />
+                        <Text
+                          style={[
+                            styles.gatewayStatusText,
+                            { color: waStatus?.status === 'qr_ready' ? '#1D4ED8' : '#B45309' },
+                          ]}
+                        >
+                          {waStatus?.status === 'qr_ready' ? 'QR Tersedia' : 'QR Kedaluwarsa'}
+                        </Text>
+                      </View>
+                    </View>
 
                     <View style={styles.qrImageWrapper}>
                       <Image
@@ -1591,9 +1999,33 @@ export function SettingsView({
                       />
                     </View>
 
-                    <Text style={styles.qrExpiryText}>
-                      QR diperbarui pada: {waQrGeneratedAt || 'Baru saja'}. (Pembaruan otomatis aktif)
-                    </Text>
+                    <View style={styles.qrCountdownRow}>
+                      <AppIcon name="clock" size={13} color={colors.textSecondary} />
+                      <Text style={styles.qrExpiryText}>
+                        {waCountdown > 0
+                          ? `QR berlaku: ${waCountdown} detik`
+                          : `QR diperbarui: ${waQrGeneratedAt || 'Baru saja'}`}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.btnQrRefreshMini}
+                        onPress={() => refreshWhatsAppWorkerState(true)}
+                        activeOpacity={0.7}
+                      >
+                        <AppIcon name="refresh" size={11} color={colors.accent} />
+                        <Text style={styles.btnQrRefreshMiniText}>Perbarui QR</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {waStatus?.status === 'qr_expired' && (
+                      <TouchableOpacity
+                        style={[styles.btnPrimary, { marginTop: 8, marginBottom: 8, alignSelf: 'center' }]}
+                        onPress={handleReconnectWhatsApp}
+                        activeOpacity={0.8}
+                      >
+                        <AppIcon name="refresh" size={14} color="#FFFFFF" />
+                        <Text style={styles.btnPrimaryText}>Perbarui QR Baru</Text>
+                      </TouchableOpacity>
+                    )}
 
                     <View style={styles.qrNoticeBox}>
                       <AppIcon name="alert" size={14} color="#D97706" />
@@ -1615,20 +2047,44 @@ export function SettingsView({
                       {waStatus?.status === 'logged_out'
                         ? 'Sesi Dicabut di Aplikasi WhatsApp Ponsel'
                         : waStatus?.status === 'error'
-                        ? 'Kendala Koneksi Socket Baileys'
-                        : waStatus?.status === 'qr_expired'
-                        ? 'QR Kedaluwarsa'
-                        : 'Sesi Belum Aktif'}
+                          ? 'Kendala Koneksi Socket Baileys'
+                          : waStatus?.status === 'qr_expired'
+                            ? 'QR Kedaluwarsa'
+                            : waStatus?.status === 'initiating'
+                              ? 'Menyiapkan QR Baru...'
+                              : 'Sesi Belum Aktif'}
                     </Text>
                     <Text style={styles.qrInfoDesc}>
                       {waStatus?.status === 'logged_out'
                         ? 'Perangkat tertaut telah dikeluarkan dari ponsel WhatsApp. Klik tombol "Hubungkan Ulang" untuk menginisialisasi sesi baru dan memunculkan QR.'
                         : waStatus?.status === 'error'
-                        ? `Alasan error: ${waStatus?.lastError || 'Koneksi terputus'}. Klik "Hubungkan Ulang" untuk mencoba kembali.`
-                        : waStatus?.status === 'qr_expired'
-                        ? 'QR Code telah kedaluwarsa. Sistem sedang meminta QR baru secara otomatis, atau klik "Hubungkan Ulang".'
-                        : 'Belum ada sesi aktif. Klik "Hubungkan Ulang" untuk meminta QR pairing baru.'}
+                          ? `Alasan error: ${waStatus?.lastError || 'Koneksi terputus'}. Klik "Coba Lagi" atau "Hubungkan Ulang" untuk mencoba kembali.`
+                          : waStatus?.status === 'qr_expired'
+                            ? 'QR Code telah kedaluwarsa. Sistem sedang meminta QR baru secara otomatis, atau klik "Perbarui QR".'
+                            : waStatus?.status === 'initiating'
+                              ? 'Sedang menghubungkan ke server WhatsApp dan membuat kode QR pairing baru. Mohon tunggu sejenak...'
+                              : 'Belum ada sesi aktif. Klik "Hubungkan WhatsApp" untuk meminta QR pairing baru.'}
                     </Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                      <TouchableOpacity
+                        style={styles.btnPrimary}
+                        onPress={handleReconnectWhatsApp}
+                        activeOpacity={0.8}
+                      >
+                        <AppIcon name="link" size={13} color="#FFFFFF" />
+                        <Text style={styles.btnPrimaryText}>
+                          {waStatus?.status === 'qr_expired' ? 'Perbarui QR' : 'Hubungkan WhatsApp'}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.btnSecondary}
+                        onPress={() => refreshWhatsAppWorkerState(true)}
+                        activeOpacity={0.8}
+                      >
+                        <AppIcon name="refresh" size={13} color={colors.textPrimary} />
+                        <Text style={styles.btnSecondaryText}>Coba Lagi</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 )}
 
@@ -1639,8 +2095,8 @@ export function SettingsView({
                   disabled={isWaLoading}
                   onPress={() => refreshWhatsAppWorkerState(true)}
                 >
-                  <AppIcon name="refresh" size={14} color={COLORS.forestDark} />
-                  <Text style={styles.btnSecondaryText}>Segarkan Status & QR</Text>
+                  <AppIcon name="refresh" size={14} color={colors.textPrimary} />
+                  <Text style={styles.btnSecondaryText}>Segarkan Status</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity
@@ -1648,18 +2104,18 @@ export function SettingsView({
                   disabled={isWaLoading}
                   onPress={handleReconnectWhatsApp}
                 >
-                  <AppIcon name="link" size={14} color={COLORS.forestDark} />
+                  <AppIcon name="link" size={14} color={colors.textPrimary} />
                   <Text style={styles.btnSecondaryText}>Hubungkan Ulang</Text>
                 </TouchableOpacity>
 
-                {(waStatus?.status === 'connected' || waStatus?.status === 'qr_ready') && (
+                {workerOnline && (
                   <TouchableOpacity
                     style={styles.btnDanger}
                     disabled={isWaLoading}
-                    onPress={() => handleDisconnectWhatsApp(false)}
+                    onPress={() => setShowLogoutConfirm(true)}
                   >
                     <AppIcon name="close" size={14} color="#DC2626" />
-                    <Text style={styles.btnDangerText}>Putuskan Sesi</Text>
+                    <Text style={styles.btnDangerText}>Putuskan & Hapus Sesi</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -1667,11 +2123,11 @@ export function SettingsView({
           </View>
 
           {/* KARTU 2: KONFIGURASI ALTERNATIF META CLOUD API (OFFICIAL) */}
-          <View style={styles.cardContainer}>
+          <View style={[styles.cardContainer, { backgroundColor: colors.surfaceCard, borderColor: colors.border }]}>
             <View style={styles.cardHeader}>
               <View>
-                <Text style={styles.cardTitle}>Konfigurasi Alternatif: Meta Cloud API (Official)</Text>
-                <Text style={styles.cardSubtitle}>
+                <Text style={[styles.cardTitle, { color: colors.textPrimary }]}>Konfigurasi Alternatif: Meta Cloud API (Official)</Text>
+                <Text style={[styles.cardSubtitle, { color: colors.textSecondary }]}>
                   Opsional untuk lembaga yang menggunakan nomor resmi Meta WhatsApp Business Cloud API.
                 </Text>
               </View>
@@ -1679,27 +2135,27 @@ export function SettingsView({
 
             <View style={styles.formGrid}>
               <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-                <Text style={styles.formLabel}>ID Organisasi WABiz</Text>
+                <Text style={[styles.formLabel, { color: colors.textPrimary }]}>ID Organisasi WABiz</Text>
                 <View style={styles.mockMonoInput}>
                   <Text style={styles.monoText}>{draft.orgId}</Text>
                 </View>
               </View>
 
               <View style={isDesktop ? styles.formColHalf : styles.formColFull}>
-                <Text style={styles.formLabel}>Zona Waktu Sistem</Text>
+                <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Zona Waktu Sistem</Text>
                 <View style={styles.mockMonoInput}>
                   <Text style={styles.monoText}>Asia/Jakarta (WIB • UTC+7)</Text>
                 </View>
               </View>
 
               <View style={styles.formColFull}>
-                <Text style={styles.formLabel}>Webhook Callback URL</Text>
+                <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Webhook Callback URL</Text>
                 <TextInput
-                  style={styles.formInput}
+                  style={[styles.formInput, { backgroundColor: colors.inputBg, color: colors.textPrimary, borderColor: colors.inputBorder }]}
                   value={draft.webhookUrl}
                   onChangeText={(val) => setDraft({ ...draft, webhookUrl: val })}
                   placeholder="https://gateway.wabiz.id/v1/webhook/..."
-                  placeholderTextColor={COLORS.textMuted}
+                  placeholderTextColor={colors.textPlaceholder}
                   autoCapitalize="none"
                 />
                 <Text style={styles.formHelper}>
@@ -1708,15 +2164,41 @@ export function SettingsView({
               </View>
 
               <View style={styles.formColFull}>
-                <Text style={styles.formLabel}>Verify Token Webhook</Text>
-                <TextInput
-                  style={styles.formInput}
-                  value={draft.verifyToken}
-                  onChangeText={(val) => setDraft({ ...draft, verifyToken: val })}
-                  placeholder="Token verifikasi rahasia..."
-                  placeholderTextColor={COLORS.textMuted}
-                  autoCapitalize="none"
-                />
+                <Text style={[styles.formLabel, { color: colors.textPrimary }]}>Verify Token Webhook</Text>
+                <View
+                  style={styles.verifyTokenInputContainer}
+                  // @ts-ignore
+                  dataSet={{ inputContainer: 'true' }}
+                >
+                  <TextInput
+                    style={styles.verifyTokenInput}
+                    value={draft.verifyToken}
+                    onChangeText={(val) => setDraft({ ...draft, verifyToken: val })}
+                    placeholder="Token verifikasi rahasia..."
+                    placeholderTextColor={colors.textPlaceholder}
+                    autoCapitalize="none"
+                    secureTextEntry={!showVerifyToken}
+                    // @ts-ignore
+                    dataSet={{ embedded: 'true' }}
+                  />
+                  <TouchableOpacity
+                    style={styles.eyeBtn}
+                    onPress={() => setShowVerifyToken(!showVerifyToken)}
+                    activeOpacity={0.7}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      showVerifyToken
+                        ? 'Sembunyikan verify token webhook'
+                        : 'Tampilkan verify token webhook'
+                    }
+                  >
+                    <AppIcon
+                      name={showVerifyToken ? 'eye' : 'eye-off'}
+                      size={17}
+                      color={showVerifyToken ? COLORS.teal : COLORS.textMuted}
+                    />
+                  </TouchableOpacity>
+                </View>
               </View>
             </View>
 
@@ -1729,6 +2211,84 @@ export function SettingsView({
           </View>
         </View>
       )}
+
+      {/* MODAL KONFIRMASI LOGOUT & PENGHAPUSAN KREDENSIAL */}
+      <Modal
+        visible={showLogoutConfirm}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowLogoutConfirm(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalBox, !isDesktop && styles.modalBoxMobile]}>
+            <View style={styles.modalHeaderRow}>
+              <View style={styles.modalDangerIconBox}>
+                <AppIcon name="alert" size={20} color="#DC2626" />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Putuskan Koneksi & Hapus Sesi?</Text>
+                <Text style={styles.modalSubtitle}>
+                  Tindakan ini akan menghentikan integrasi WhatsApp Gateway dan memusnahkan kredensial dari server.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.modalWarningBox}>
+              <View style={styles.modalWarningItem}>
+                <AppIcon name="check" size={13} color="#DC2626" />
+                <Text style={styles.modalWarningText}>
+                  Socket Baileys akan dimatikan dan tidak akan melakukan rekoneksi otomatis.
+                </Text>
+              </View>
+              <View style={styles.modalWarningItem}>
+                <AppIcon name="check" size={13} color="#DC2626" />
+                <Text style={styles.modalWarningText}>
+                  Seluruh file sesi kredensial (creds.json) dimusnahkan secara permanen dari server lokal.
+                </Text>
+              </View>
+              <View style={styles.modalWarningItem}>
+                <AppIcon name="check" size={13} color="#DC2626" />
+                <Text style={styles.modalWarningText}>
+                  Status Dashboard seketika kembali ke &apos;Belum Terhubung&apos; tanpa menampilkan nomor lama.
+                </Text>
+              </View>
+              <View style={styles.modalWarningItem}>
+                <AppIcon name="check" size={13} color="#DC2626" />
+                <Text style={styles.modalWarningText}>
+                  Untuk menghubungkan kembali, Anda harus melakukan scan QR baru melalui ponsel.
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.modalActionsRow}>
+              <TouchableOpacity
+                style={styles.modalBtnCancel}
+                activeOpacity={0.8}
+                onPress={() => setShowLogoutConfirm(false)}
+                disabled={isWaLoading}
+              >
+                <Text style={styles.modalBtnCancelText}>Batal</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.modalBtnConfirmDanger}
+                activeOpacity={0.8}
+                onPress={() => handleDisconnectWhatsApp(true)}
+                disabled={isWaLoading}
+              >
+                {isWaLoading ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <AppIcon name="close" size={14} color="#FFFFFF" />
+                    <Text style={styles.modalBtnConfirmDangerText}>Ya, Putuskan & Hapus Kredensial</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1736,7 +2296,7 @@ export function SettingsView({
 // ==========================================
 // STYLESHEET B2B SAAS PENGATURAN
 // ==========================================
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemePalette) => StyleSheet.create({
   pageContainer: {
     flex: 1,
     gap: 16,
@@ -1744,10 +2304,10 @@ const styles = StyleSheet.create({
 
   // HEADER
   pageHeader: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 20,
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -1762,26 +2322,27 @@ const styles = StyleSheet.create({
   headerTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    flexWrap: 'wrap',
+    gap: 8,
     marginBottom: 4,
   },
   headerTitle: {
     fontSize: 22,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   headerSubtitle: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 18,
   },
   statusPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.accentBorder,
     borderRadius: 12,
     paddingVertical: 2,
     paddingHorizontal: 8,
@@ -1795,7 +2356,7 @@ const styles = StyleSheet.create({
   statusPillText: {
     fontSize: 11,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   headerActions: {
     flexDirection: 'row',
@@ -1815,20 +2376,20 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   feedbackSuccess: {
-    backgroundColor: '#ECFDF5',
-    borderColor: '#A7F3D0',
+    backgroundColor: colors.successBg,
+    borderColor: colors.successBorder,
   },
   feedbackError: {
-    backgroundColor: '#FEF2F2',
-    borderColor: '#FECACA',
+    backgroundColor: colors.dangerBg,
+    borderColor: colors.dangerBorder,
   },
   feedbackInfo: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#BFDBFE',
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accentBorder,
   },
   feedbackWarning: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
+    backgroundColor: colors.warningBg,
+    borderColor: colors.warningBorder,
   },
   feedbackBannerText: {
     fontSize: 13,
@@ -1838,8 +2399,8 @@ const styles = StyleSheet.create({
 
   // PROTOTYPE BANNER
   protoBanner: {
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
+    backgroundColor: colors.warningBg,
+    borderColor: colors.warningBorder,
     borderWidth: 1,
     borderRadius: 8,
     padding: 14,
@@ -1853,18 +2414,18 @@ const styles = StyleSheet.create({
   protoBannerTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#92400E',
+    color: colors.warningText,
     marginBottom: 2,
   },
   protoBannerDesc: {
     fontSize: 12,
-    color: '#78350F',
+    color: colors.warningText,
     lineHeight: 16,
   },
   protoRestoreBtn: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: '#CBD5E1',
+    borderColor: colors.border,
     borderRadius: 4,
     paddingVertical: 4,
     paddingHorizontal: 8,
@@ -1872,19 +2433,22 @@ const styles = StyleSheet.create({
   protoRestoreBtnText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
 
   // TAB NAVIGASI
-  tabNavRow: {
-    backgroundColor: COLORS.surface,
+  tabNavContainer: {
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 4,
+    borderColor: colors.border,
+    padding: 3,
+  },
+  tabNavContent: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 4,
+    alignItems: 'center',
+    padding: 2,
   },
   tabBtn: {
     flexDirection: 'row',
@@ -1895,48 +2459,48 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   tabBtnActive: {
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
   },
   tabBtnText: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   tabBtnTextActive: {
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     fontWeight: '700',
   },
 
   // CARD CONTAINER
   cardContainer: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 20,
     gap: 16,
   },
   cardHeader: {
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
     paddingBottom: 12,
   },
   cardTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 4,
   },
   cardSubtitle: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   cardFooter: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: colors.border,
     paddingTop: 14,
   },
 
@@ -1955,21 +2519,59 @@ const styles = StyleSheet.create({
   formLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 5,
   },
   requiredStar: {
     color: '#DC2626',
   },
   formInput: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 9,
     fontSize: 13,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
+  },
+  verifyTokenInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 6,
+    paddingHorizontal: 12,
+  },
+  verifyTokenInput: {
+    flex: 1,
+    paddingVertical: 9,
+    fontSize: 13,
+    color: colors.textPrimary,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
+  },
+  eyeBtn: {
+    paddingLeft: 8,
+    paddingVertical: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...Platform.select({
+      web: {
+        cursor: 'pointer',
+      } as any,
+    }),
   },
   formTextArea: {
     minHeight: 70,
@@ -1981,7 +2583,7 @@ const styles = StyleSheet.create({
   },
   formHelper: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
     marginTop: 4,
     lineHeight: 15,
   },
@@ -1997,7 +2599,7 @@ const styles = StyleSheet.create({
     height: 40,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     overflow: 'hidden',
   },
   logoPreviewImage: {
@@ -2015,15 +2617,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     paddingVertical: 6,
     paddingHorizontal: 10,
   },
   radioCardActive: {
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     borderColor: COLORS.emerald,
   },
   radioDot: {
@@ -2046,11 +2648,11 @@ const styles = StyleSheet.create({
   },
   radioLabel: {
     fontSize: 11,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     fontWeight: '500',
   },
   radioLabelActive: {
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     fontWeight: '700',
   },
 
@@ -2060,10 +2662,10 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   faqItemCard: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     padding: 10,
     gap: 4,
   },
@@ -2073,7 +2675,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   faqNumberBadge: {
-    backgroundColor: '#E2E8F0',
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 3,
     paddingHorizontal: 6,
     paddingVertical: 1,
@@ -2081,7 +2683,7 @@ const styles = StyleSheet.create({
   faqNumberText: {
     fontSize: 9,
     fontWeight: '700',
-    color: '#475569',
+    color: colors.textSecondary,
   },
   faqDeleteBtn: {
     padding: 4,
@@ -2089,20 +2691,20 @@ const styles = StyleSheet.create({
   faqQuestionText: {
     fontSize: 12,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   faqAnswerText: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 16,
   },
 
   // ADD FAQ
   addFaqBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.surfaceSecondary,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     padding: 12,
     gap: 8,
     marginTop: 10,
@@ -2110,7 +2712,7 @@ const styles = StyleSheet.create({
   addFaqTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   btnAddFaqSubmit: {
     flexDirection: 'row',
@@ -2154,16 +2756,16 @@ const styles = StyleSheet.create({
     color: '#B45309',
   },
   mockMonoInput: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 12,
     paddingVertical: 9,
   },
   monoText: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
   },
   gatewayActionRow: {
@@ -2172,7 +2774,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 10,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: colors.border,
     paddingTop: 14,
   },
 
@@ -2195,9 +2797,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 6,
@@ -2205,7 +2807,7 @@ const styles = StyleSheet.create({
   btnSecondaryText: {
     fontSize: 13,
     fontWeight: '600',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
 
   // USER ROLE PILL
@@ -2260,37 +2862,82 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 14,
   },
   loadingBannerText: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     fontWeight: '500',
   },
 
   // QR & BAILEYS WORKER STYLES
   qrBox: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 16,
     alignItems: 'center',
   },
-  qrInstructionTitle: {
-    fontSize: 14,
+  qrHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    width: '100%',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 6,
+  },
+  qrCountdownRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginBottom: 8,
+    flexWrap: 'wrap',
+  },
+  btnQrRefreshMini: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 4,
+    backgroundColor: colors.accentSubtle,
+    borderWidth: 1,
+    borderColor: colors.accentBorder,
+  },
+  btnQrRefreshMiniText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.accent,
+  },
+  btnRetryWorker: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#DC2626',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+  },
+  btnRetryWorkerText: {
+    fontSize: 12,
     fontWeight: '700',
-    color: COLORS.textDark,
-    marginBottom: 4,
-    textAlign: 'center',
+    color: '#FFFFFF',
+  },
+  qrInstructionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.textPrimary,
   },
   qrInstructionDesc: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 18,
     maxWidth: 500,
@@ -2300,7 +2947,7 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     marginVertical: 12,
   },
   qrImage: {
@@ -2309,15 +2956,15 @@ const styles = StyleSheet.create({
   },
   qrExpiryText: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
     marginBottom: 8,
   },
   qrNoticeBox: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#FFFBEB',
-    borderColor: '#FDE68A',
+    backgroundColor: colors.warningBg,
+    borderColor: colors.warningBorder,
     borderWidth: 1,
     borderRadius: 6,
     paddingVertical: 8,
@@ -2326,13 +2973,13 @@ const styles = StyleSheet.create({
   },
   qrNoticeText: {
     fontSize: 11,
-    color: '#92400E',
+    color: colors.warningText,
     fontWeight: '500',
   },
   qrWarningBox: {
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.dangerBg,
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: colors.dangerBorder,
     borderRadius: 8,
     padding: 14,
     gap: 8,
@@ -2340,17 +2987,17 @@ const styles = StyleSheet.create({
   qrWarningTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#B91C1C',
+    color: colors.dangerText,
   },
   qrWarningDesc: {
     fontSize: 12,
-    color: '#991B1B',
+    color: colors.dangerText,
     lineHeight: 18,
   },
   qrSuccessBox: {
-    backgroundColor: '#ECFDF5',
+    backgroundColor: colors.successBg,
     borderWidth: 1,
-    borderColor: '#A7F3D0',
+    borderColor: colors.successBorder,
     borderRadius: 8,
     padding: 16,
     gap: 12,
@@ -2366,17 +3013,17 @@ const styles = StyleSheet.create({
   qrSuccessTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#065F46',
+    color: colors.successText,
   },
   qrSuccessSubtitle: {
     fontSize: 12,
-    color: '#047857',
+    color: colors.successText,
   },
   qrConnectedDetails: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surfaceCard,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: '#D1FAE5',
+    borderColor: colors.border,
     padding: 12,
     gap: 6,
   },
@@ -2388,22 +3035,22 @@ const styles = StyleSheet.create({
   },
   qrDetailLabel: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   qrDetailValue: {
     fontSize: 12,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   qrCompanionNote: {
     fontSize: 11,
-    color: '#047857',
+    color: colors.successText,
     fontStyle: 'italic',
   },
   qrInfoBox: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 14,
     gap: 6,
@@ -2411,20 +3058,20 @@ const styles = StyleSheet.create({
   qrInfoTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   qrInfoDesc: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 18,
   },
   btnDanger: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.dangerBg,
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: colors.dangerBorder,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 6,
@@ -2432,6 +3079,112 @@ const styles = StyleSheet.create({
   btnDangerText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#DC2626',
+    color: colors.dangerText,
+  },
+
+  // MODAL LOGOUT CONFIRMATION
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.65)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 16,
+  },
+  modalBox: {
+    backgroundColor: colors.surfaceCard,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.border,
+    width: '100%',
+    maxWidth: 520,
+    padding: 24,
+    gap: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 24,
+    elevation: 8,
+  },
+  modalBoxMobile: {
+    maxWidth: '100%',
+    padding: 18,
+  },
+  modalHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 14,
+  },
+  modalDangerIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#FEE2E2',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    marginBottom: 4,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
+  modalWarningBox: {
+    backgroundColor: colors.dangerBg,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.dangerBorder,
+    padding: 14,
+    gap: 10,
+  },
+  modalWarningItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+  },
+  modalWarningText: {
+    fontSize: 12,
+    color: colors.dangerText,
+    lineHeight: 17,
+    flex: 1,
+    fontWeight: '500',
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 4,
+  },
+  modalBtnCancel: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
+  },
+  modalBtnCancelText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  modalBtnConfirmDanger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    borderRadius: 8,
+    backgroundColor: '#DC2626',
+  },
+  modalBtnConfirmDangerText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#FFFFFF',
   },
 });

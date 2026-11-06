@@ -319,7 +319,8 @@ export async function cancelCampaign(
       .eq('id', campaignId)
       .eq('organization_id', orgId);
 
-    // 3. Batalkan seluruh penerima yang masih pending
+    // 3. Batalkan seluruh penerima yang masih pending atau processing
+    // Pesan yang sudah 'sent' atau 'delivered' TIDAK ditarik kembali (tetap tersimpan apa adanya)
     const { data: updatedRecs } = await supabase
       .from('campaign_recipients')
       .update({
@@ -329,11 +330,11 @@ export async function cancelCampaign(
       })
       .eq('campaign_id', campaignId)
       .eq('organization_id', orgId)
-      .eq('status', 'pending')
+      .in('status', ['pending', 'processing'])
       .select('id');
 
     const cancelledCount = updatedRecs ? updatedRecs.length : 0;
-    console.log(`[Campaigns] Kampanye "${campaign.name}" (${campaignId}) dibatalkan. ${cancelledCount} penerima pending di-skip.`);
+    console.log(`[Campaigns] Kampanye "${campaign.name}" (${campaignId}) dibatalkan. ${cancelledCount} antrean penerima di-skip.`);
 
     // Recalculate skipped count
     const { count: totalSkipped } = await supabase
@@ -344,12 +345,44 @@ export async function cancelCampaign(
 
     await supabase
       .from('campaigns')
-      .update({ skipped_count: totalSkipped || 0 })
+      .update({
+        skipped_count: totalSkipped || 0,
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', campaignId);
+
+    // Terbitkan notifikasi pembatalan ke public.notifications
+    try {
+      const { data: members } = await supabase
+        .from('organization_members')
+        .select('user_id')
+        .eq('organization_id', orgId);
+
+      if (members && members.length > 0) {
+        const notifRows = members.map((m: { user_id: string }) => ({
+          organization_id: orgId,
+          user_id: m.user_id,
+          title: 'Siaran Kampanye Dibatalkan',
+          body: `Siaran kampanye "${campaign.name}" telah dibatalkan. Sebanyak ${cancelledCount} antrean pesan dihentikan.`,
+          category: 'campaign',
+          reference_type: 'campaign',
+          reference_id: campaignId,
+          dedup_key: `campaign:cancelled:${campaignId}`,
+          is_read: false,
+          created_at: new Date().toISOString(),
+        }));
+
+        await supabase
+          .from('notifications')
+          .upsert(notifRows, { onConflict: 'organization_id,user_id,dedup_key', ignoreDuplicates: true });
+      }
+    } catch (notifErr: any) {
+      console.warn('[Campaigns] Non-fatal exception saat insert notifikasi pembatalan:', notifErr?.message || notifErr);
+    }
 
     return {
       success: true,
-      message: `Kampanye "${campaign.name}" berhasil dibatalkan.`,
+      message: `Kampanye "${campaign.name}" berhasil dibatalkan. Sebanyak ${cancelledCount} antrean pesan yang belum terkirim telah dihentikan.`,
     };
   } catch (err: any) {
     return { success: false, error: err?.message || String(err) };
@@ -1071,6 +1104,26 @@ export class CampaignQueueScheduler {
           continue;
         }
 
+        // TAHAP 4.5: INTEGRITAS PEMBATALAN (Batalkan pengiriman jika kampanye telah di-cancel)
+        const { data: liveCamp } = await supabase
+          .from('campaigns')
+          .select('status')
+          .eq('id', campObj.id)
+          .maybeSingle();
+
+        if (liveCamp?.status === 'cancelled') {
+          console.log(`[Campaign Queue] Pengiriman ke +${maskPhone(item.phone)} dihentikan karena kampanye "${campObj.name}" telah dibatalkan.`);
+          await supabase
+            .from('campaign_recipients')
+            .update({
+              status: 'skipped',
+              error_message: 'Kampanye dibatalkan oleh admin sebelum pengiriman.',
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', item.id);
+          continue;
+        }
+
         console.log(`[Campaign Queue] Mengirim siaran ke ${item.name} (+${maskPhone(item.phone)}) untuk kampanye "${campObj.name}" via ${provider.providerType}...`);
 
         // TAHAP 5: PENGIRIMAN VIA PROVIDER (Baileys Staging atau Meta Cloud API)
@@ -1200,6 +1253,35 @@ export class CampaignQueueScheduler {
             .eq('id', camp.id);
 
           console.log(`[Campaign Scheduler] Kampanye "${camp.name}" (${camp.id}) SELESAI diproses! (Terkirim: ${sentCount || 0}, Gagal: ${failedCount || 0}, Dilewati: ${skippedCount || 0}).`);
+
+          // Terbitkan notifikasi siaran selesai ke public.notifications
+          try {
+            const { data: members } = await supabase
+              .from('organization_members')
+              .select('user_id')
+              .eq('organization_id', camp.organization_id);
+
+            if (members && members.length > 0) {
+              const notifRows = members.map((m: { user_id: string }) => ({
+                organization_id: camp.organization_id,
+                user_id: m.user_id,
+                title: 'Siaran Kampanye Selesai Diproses',
+                body: `Kampanye "${camp.name}" telah selesai diproses (Terkirim: ${sentCount || 0}, Gagal: ${failedCount || 0}, Dilewati: ${skippedCount || 0}).`,
+                category: 'campaign',
+                reference_type: 'campaign',
+                reference_id: camp.id,
+                dedup_key: `campaign:completed:${camp.id}`,
+                is_read: false,
+                created_at: new Date().toISOString(),
+              }));
+
+              await supabase
+                .from('notifications')
+                .upsert(notifRows, { onConflict: 'organization_id,user_id,dedup_key', ignoreDuplicates: true });
+            }
+          } catch (notifErr: any) {
+            console.warn('[Campaign Scheduler] Non-fatal exception saat insert notifikasi kampanye selesai:', notifErr?.message || notifErr);
+          }
         }
       }
     } catch (e: any) {

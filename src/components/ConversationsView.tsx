@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -9,15 +9,19 @@ import {
   Platform,
   ActivityIndicator,
   Modal,
+  KeyboardAvoidingView,
+  Keyboard,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { COLORS, AppIcon } from '../theme';
+import { COLORS, AppIcon, SHADOWS, BACKGROUNDS, useTheme, ThemePalette } from '../theme';
 import { Contact } from './ContactsView';
 import {
   sendWhatsAppMessage,
   retryRegistrationHandoffClient,
   deleteConversationClient,
 } from '../lib/whatsappClient';
+import { notifyChatEvent } from '../lib/notifications';
+import { formatErrorUserMessage } from '../lib/errorHandler';
 
 // ==========================================
 // TIPE DATA PERCAKAPAN & PESAN SUPABASE
@@ -181,23 +185,7 @@ export function normalizeConversationStatus(raw: string | null | undefined): Con
 
 // Helper terjemahan error Supabase ke Bahasa Indonesia
 export function translateConversationError(errMsg: string): string {
-  const lower = errMsg.toLowerCase();
-  if (lower.includes('duplicate') || lower.includes('unique') || lower.includes('23505')) {
-    return 'Percakapan untuk kontak ini sudah terdaftar dalam organisasi.';
-  }
-  if (lower.includes('conversations_status_check') || lower.includes('check constraint')) {
-    return 'Status percakapan tidak valid untuk database (hanya menerima open, pending, resolved).';
-  }
-  if (lower.includes('permission denied') || lower.includes('policy') || lower.includes('42501')) {
-    return 'Akses ditolak oleh kebijakan keamanan (RLS). Pastikan Anda adalah anggota organisasi aktif.';
-  }
-  if (lower.includes('foreign key') || lower.includes('violates foreign key')) {
-    return 'Kontak atau organisasi tidak valid.';
-  }
-  if (lower.includes('network') || lower.includes('fetch') || lower.includes('connection')) {
-    return 'Gagal terhubung ke database Supabase. Periksa koneksi internet Anda.';
-  }
-  return errMsg || 'Terjadi kendala saat memproses percakapan.';
+  return formatErrorUserMessage(errMsg, { entityName: 'percakapan', isWorker: false });
 }
 
 /**
@@ -263,6 +251,8 @@ export function mapDbMessageToChatMessage(
 // KOMPONEN BADGE STATUS PENANGANAN
 // ==========================================
 export function StatusBadge({ status }: { status: ConversationStatus | string }) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const normalized = normalizeConversationStatus(status);
   switch (normalized) {
     case 'open':
@@ -282,7 +272,8 @@ export function StatusBadge({ status }: { status: ConversationStatus | string })
     case 'resolved':
       return (
         <View style={styles.badgeResolved}>
-          <Text style={styles.badgeResolvedText}>✓ Selesai</Text>
+          <AppIcon name="check" size={11} color={COLORS.emerald} />
+          <Text style={styles.badgeResolvedText}>Selesai</Text>
         </View>
       );
   }
@@ -310,7 +301,7 @@ export interface ConversationsViewProps {
 // ==========================================
 export function ConversationsView({
   organizationId,
-  currentUserId: _currentUserId,
+  currentUserId,
   currentUserFullName,
   contacts: externalContacts,
   conversations: externalConversations,
@@ -322,6 +313,8 @@ export function ConversationsView({
   onConversationDeleted,
   onConversationUpdated,
 }: ConversationsViewProps) {
+  const { isDark, colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [internalConversations, setInternalConversations] = useState<Conversation[]>([]);
   const conversations = externalConversations ?? internalConversations;
   const setConversations = externalSetConversations ?? setInternalConversations;
@@ -350,6 +343,7 @@ export function ConversationsView({
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [inputText, setInputText] = useState('');
+  const chatScrollRef = useRef<any>(null);
 
   // Modal Mulai Percakapan Baru
   const [isNewConvModalOpen, setIsNewConvModalOpen] = useState(false);
@@ -367,7 +361,7 @@ export function ConversationsView({
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteSuccessNotice, setDeleteSuccessNotice] = useState<string | null>(null);
-  const hasUserClosedDetailRef = React.useRef(false);
+  const [hasUserClosedDetail, setHasUserClosedDetail] = useState(false);
 
   // Muat Daftar Percakapan dari Supabase public.conversations
   const fetchConversations = useCallback(
@@ -629,7 +623,7 @@ export function ConversationsView({
   // Pada desktop jika ada percakapan dan belum ada yang dipilih, pilih percakapan pertama secara otomatis
   useEffect(() => {
     let ignore = false;
-    if (isDesktop && conversations.length > 0 && !selectedId && !hasUserClosedDetailRef.current) {
+    if (isDesktop && conversations.length > 0 && !selectedId && !hasUserClosedDetail) {
       const timer = setTimeout(() => {
         if (!ignore) {
           setSelectedId(conversations[0].id);
@@ -722,9 +716,19 @@ export function ConversationsView({
   // Percakapan aktif yang sedang dibuka
   const selectedConversation = conversations.find((c) => c.id === selectedId) ?? null;
 
+  // Auto-scroll ke pesan paling akhir saat percakapan dibuka atau ada pesan baru
+  useEffect(() => {
+    if (selectedId && (selectedConversation?.messages.length ?? 0) > 0) {
+      const timer = setTimeout(() => {
+        chatScrollRef.current?.scrollToEnd?.({ animated: true });
+      }, 120);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedId, selectedConversation?.messages.length]);
+
   // Handler memilih percakapan
   const handleSelectConversation = (id: string) => {
-    hasUserClosedDetailRef.current = false;
+    setHasUserClosedDetail(false);
     setSelectedId(id);
     setConversations((prev) =>
       prev.map((c) => (c.id === id ? { ...c, unreadCount: 0 } : c))
@@ -801,7 +805,7 @@ export function ConversationsView({
 
       // Jika percakapan yang dihapus adalah yang sedang dibuka, tutup panel detail
       if (isTargetSelected) {
-        hasUserClosedDetailRef.current = true;
+        setHasUserClosedDetail(true);
         setSelectedId(null);
       }
 
@@ -836,11 +840,6 @@ export function ConversationsView({
   const handleUpdateStatus = async (newStatus: ConversationStatus) => {
     if (!selectedId || !effectiveOrgId) return;
 
-    // Update lokal terlebih dahulu untuk responsivitas instan
-    setConversations((prev) =>
-      prev.map((c) => (c.id === selectedId ? { ...c, status: newStatus } : c))
-    );
-
     try {
       const { error } = await supabase
         .from('conversations')
@@ -853,9 +852,30 @@ export function ConversationsView({
 
       if (error) {
         console.error('Error updating status in Supabase:', error.message);
+        setSendError(`Gagal memperbarui status: ${translateConversationError(error.message)}`);
+        return;
+      }
+
+      // Perbarui state lokal HANYA setelah Supabase mengonfirmasi keberhasilan
+      setConversations((prev) =>
+        prev.map((c) => (c.id === selectedId ? { ...c, status: newStatus } : c))
+      );
+      onConversationUpdated?.();
+
+      if (effectiveOrgId && currentUserId) {
+        notifyChatEvent({
+          organizationId: effectiveOrgId,
+          userId: currentUserId,
+          conversationId: selectedId,
+          eventType: 'status_updated',
+          contactName: selectedConversation?.name || 'pelanggan',
+          extraInfo: newStatus === 'resolved' ? 'Selesai' : newStatus === 'open' ? 'Aktif' : 'Menunggu',
+        }).catch((e) => console.warn('[ConversationsView] Gagal membuat notifikasi status percakapan:', e));
       }
     } catch (err) {
-      console.error('Exception updating conversation status:', err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Exception updating conversation status:', msg);
+      setSendError(`Gagal memperbarui status: ${translateConversationError(msg)}`);
     }
   };
 
@@ -971,6 +991,17 @@ export function ConversationsView({
 
         setSendSuccessNotice('Pesan berhasil terkirim ke WhatsApp pelanggan ✓');
         onConversationUpdated?.();
+
+        if (effectiveOrgId && currentUserId) {
+          notifyChatEvent({
+            organizationId: effectiveOrgId,
+            userId: currentUserId,
+            conversationId: selectedId,
+            eventType: 'outbound_message',
+            contactName: selectedConversation?.name || 'pelanggan',
+            messageSnippet: messageToSend,
+          }).catch((e) => console.warn('[ConversationsView] Gagal membuat notifikasi pesan keluar:', e));
+        }
         setTimeout(() => {
           setSendSuccessNotice(null);
         }, 3000);
@@ -1007,9 +1038,18 @@ export function ConversationsView({
       if (res.success) {
         setRetryHandoffNotice('Notifikasi pendaftaran berhasil dikirim ulang ke WhatsApp petugas CS!');
         await fetchConversations(undefined, true);
+        if (effectiveOrgId && currentUserId) {
+          notifyChatEvent({
+            organizationId: effectiveOrgId,
+            userId: currentUserId,
+            conversationId: selectedId,
+            eventType: 'handoff_success',
+            contactName: selectedConversation?.name || 'pendaftar',
+          }).catch((e) => console.warn('[ConversationsView] Gagal membuat notifikasi handoff:', e));
+        }
         setTimeout(() => setRetryHandoffNotice(null), 4000);
       } else {
-        setRetryHandoffError(res.error || 'Gagal mengirim notifikasi ke CS pendaftaran.');
+        setRetryHandoffError(res.error || 'WhatsApp Gateway belum terhubung. Operasi pengalihan belum menghasilkan notifikasi WhatsApp nyata.');
       }
     } catch (err: any) {
       setRetryHandoffError(err?.message || 'Gagal menghubungi worker.');
@@ -1223,6 +1263,16 @@ export function ConversationsView({
       setSelectedId(newConvRow.id);
       setIsNewConvModalOpen(false);
       setSelectedContactForNew(null);
+
+      if (effectiveOrgId && currentUserId && newConvRow) {
+        notifyChatEvent({
+          organizationId: effectiveOrgId,
+          userId: currentUserId,
+          conversationId: newConvRow.id,
+          eventType: 'new_conversation',
+          contactName: selectedContactForNew.name || 'pelanggan',
+        }).catch((e) => console.warn('[ConversationsView] Gagal membuat notifikasi percakapan:', e));
+      }
       setNewConvInitialMessage('');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
@@ -1246,18 +1296,24 @@ export function ConversationsView({
   // RENDER SUB-KOMPONEN: DAFTAR PERCAKAPAN
   // ==========================================
   const renderConversationList = () => (
-    <View style={[styles.listColumn, !isDesktop && styles.listColumnMobile]}>
+    <View style={[styles.listColumn, !isDesktop && styles.listColumnMobile, { backgroundColor: colors.surfaceCard, borderRightColor: colors.border }]}>
       {/* Search & Tombol Percakapan Baru */}
       <View style={styles.listSearchContainer}>
         <View style={styles.listSearchRow}>
-          <View style={styles.searchBox}>
+          <View
+            style={[styles.searchBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            // @ts-ignore
+            dataSet={{ inputContainer: 'true' }}
+          >
             <AppIcon name="search" size={15} color={COLORS.textSecondary} />
             <TextInput
-              style={styles.searchInput}
+              style={[styles.searchInput, { color: colors.textPrimary }]}
               placeholder="Cari nama, nomor, pesan..."
-              placeholderTextColor={COLORS.textMuted}
+              placeholderTextColor={colors.textPlaceholder}
               value={searchQuery}
               onChangeText={setSearchQuery}
+              // @ts-ignore
+              dataSet={{ embedded: 'true' }}
             />
             {searchQuery.length > 0 && (
               <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -1297,46 +1353,54 @@ export function ConversationsView({
       )}
 
       {/* Filter Tabs */}
-      <View style={styles.filterTabsRow}>
-        <TouchableOpacity
-          style={[styles.filterTabItem, activeFilter === 'all' && styles.filterTabItemActive]}
-          onPress={() => setActiveFilter('all')}
-          activeOpacity={0.7}
+      <View style={styles.filterTabsContainer}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterTabsContent}
+          // @ts-ignore
+          data-no-scrollbar="true"
         >
-          <Text style={[styles.filterTabText, activeFilter === 'all' && styles.filterTabTextActive]}>
-            Semua ({countAll})
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterTabItem, activeFilter === 'all' && styles.filterTabItemActive]}
+            onPress={() => setActiveFilter('all')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.filterTabText, activeFilter === 'all' && styles.filterTabTextActive]}>
+              Semua ({countAll})
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.filterTabItem, activeFilter === 'unread' && styles.filterTabItemActive]}
-          onPress={() => setActiveFilter('unread')}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.filterTabText, activeFilter === 'unread' && styles.filterTabTextActive]}>
-            Belum Dibaca ({countUnread})
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterTabItem, activeFilter === 'unread' && styles.filterTabItemActive]}
+            onPress={() => setActiveFilter('unread')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.filterTabText, activeFilter === 'unread' && styles.filterTabTextActive]}>
+              Belum Dibaca ({countUnread})
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.filterTabItem, activeFilter === 'pending' && styles.filterTabItemActive]}
-          onPress={() => setActiveFilter('pending')}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.filterTabText, activeFilter === 'pending' && styles.filterTabTextActive]}>
-            Menunggu ({countPending})
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterTabItem, activeFilter === 'pending' && styles.filterTabItemActive]}
+            onPress={() => setActiveFilter('pending')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.filterTabText, activeFilter === 'pending' && styles.filterTabTextActive]}>
+              Menunggu ({countPending})
+            </Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.filterTabItem, activeFilter === 'resolved' && styles.filterTabItemActive]}
-          onPress={() => setActiveFilter('resolved')}
-          activeOpacity={0.7}
-        >
-          <Text style={[styles.filterTabText, activeFilter === 'resolved' && styles.filterTabTextActive]}>
-            Selesai ({countResolved})
-          </Text>
-        </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.filterTabItem, activeFilter === 'resolved' && styles.filterTabItemActive]}
+            onPress={() => setActiveFilter('resolved')}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.filterTabText, activeFilter === 'resolved' && styles.filterTabTextActive]}>
+              Selesai ({countResolved})
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
       </View>
 
       {/* Banner Sukses Hapus Percakapan */}
@@ -1354,7 +1418,11 @@ export function ConversationsView({
           <Text style={styles.loadingText}>Memuat percakapan Supabase...</Text>
         </View>
       ) : (
-        <ScrollView style={styles.conversationScrollList} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          style={styles.conversationScrollList}
+          contentContainerStyle={styles.conversationScrollListContent}
+          showsVerticalScrollIndicator={false}
+        >
           {filteredConversations.length === 0 ? (
             <View style={styles.listEmptyState}>
               <View style={styles.emptyIconBox}>
@@ -1480,7 +1548,7 @@ export function ConversationsView({
         <View style={styles.emptyDetailWrapper}>
           <View style={styles.emptyDetailCenter}>
             <View style={styles.emptyDetailIconCircle}>
-              <AppIcon name="chat" size={28} color={COLORS.forestDark} />
+              <AppIcon name="chat" size={28} color={colors.textPrimary} />
             </View>
             <Text style={styles.emptyDetailTitle}>Pilih Percakapan Pelanggan</Text>
             <Text style={styles.emptyDetailDesc}>
@@ -1493,7 +1561,7 @@ export function ConversationsView({
                   onPress={() => setSelectedId(conversations[0].id)}
                   activeOpacity={0.8}
                 >
-                  <AppIcon name="chat" size={13} color={COLORS.forestDark} />
+                  <AppIcon name="chat" size={13} color={colors.textPrimary} />
                   <Text style={styles.btnSelectFirstText}>Buka Percakapan Pertama</Text>
                 </TouchableOpacity>
               )}
@@ -1528,96 +1596,110 @@ export function ConversationsView({
     }
 
     return (
-      <View style={styles.detailContainer}>
-        {/* Detail Header: Customer identity & Status actions */}
-        <View style={styles.detailHeader}>
-          <View style={styles.detailHeaderCustomer}>
-            {!isDesktop && (
-              <TouchableOpacity
-                style={styles.btnBackMobile}
-                onPress={() => setSelectedId(null)}
-                activeOpacity={0.7}
-                accessibilityLabel="Kembali ke Daftar"
-              >
-                <AppIcon name="arrow-left" size={16} color={COLORS.textDark} />
-              </TouchableOpacity>
-            )}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 75 : 0}
+      >
+        <View style={[styles.detailContainer, !isDesktop && styles.detailContainerMobile, { backgroundColor: colors.surfaceCard }]}>
+          {/* Detail Header: Customer identity & Status actions */}
+          <View style={[styles.detailHeader, !isDesktop && styles.detailHeaderMobile, { backgroundColor: colors.surfaceCard, borderBottomColor: colors.border }]}>
+            <View style={[styles.detailHeaderTopRow, !isDesktop && styles.detailHeaderTopRowMobile]}>
+              <View style={styles.detailHeaderCustomer}>
+                {!isDesktop && (
+                  <TouchableOpacity
+                    style={styles.btnBackMobile}
+                    onPress={() => setSelectedId(null)}
+                    activeOpacity={0.7}
+                    accessibilityLabel="Kembali ke Daftar"
+                  >
+                    <AppIcon name="arrow-left" size={17} color={colors.textPrimary} />
+                  </TouchableOpacity>
+                )}
 
-            <View style={[styles.detailAvatar, { backgroundColor: selectedConversation.avatarBg }]}>
-              <Text style={styles.detailAvatarText}>{selectedConversation.avatarText}</Text>
-            </View>
+                <View style={[styles.detailAvatar, { backgroundColor: selectedConversation.avatarBg }]}>
+                  <Text style={styles.detailAvatarText}>{selectedConversation.avatarText}</Text>
+                </View>
 
-            <View style={{ flex: 1 }}>
-              <View style={styles.detailNameRow}>
-                <Text style={styles.detailCustomerName} numberOfLines={1}>
-                  {selectedConversation.name}
-                </Text>
-                <View style={styles.tagBadge}>
-                  <Text style={styles.tagBadgeText}>{selectedConversation.tag}</Text>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <View style={styles.detailNameRow}>
+                    <Text style={[styles.detailCustomerName, { color: colors.textPrimary }]} numberOfLines={1}>
+                      {selectedConversation.name}
+                    </Text>
+                    <View style={styles.tagBadge}>
+                      <Text style={styles.tagBadgeText}>{selectedConversation.tag}</Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.detailCustomerPhone, { color: colors.textSecondary }]}>{selectedConversation.phone}</Text>
                 </View>
               </View>
-              <Text style={styles.detailCustomerPhone}>{selectedConversation.phone}</Text>
+
+              {/* Status Badge selalu terlihat jelas di baris atas */}
+              <StatusBadge status={selectedConversation.status} />
+            </View>
+
+            {/* Action Buttons: Status Transition (selalu 'open' | 'pending' | 'resolved') */}
+            <View style={[styles.detailActionButtonsRow, !isDesktop && styles.detailActionButtonsRowMobile]}>
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+              >
+                {/* Tombol Ambil Alih (CS): mengubah status menjadi 'open' */}
+                {selectedConversation.status !== 'open' && selectedConversation.status !== 'resolved' && (
+                  <TouchableOpacity
+                    style={styles.btnTakeOver}
+                    onPress={() => handleUpdateStatus('open')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.btnTakeOverText}>Ambil Alih (CS)</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Tombol Tandai Selesai: mengubah status menjadi 'resolved' */}
+                {selectedConversation.status !== 'resolved' ? (
+                  <TouchableOpacity
+                    style={styles.btnResolve}
+                    onPress={() => handleUpdateStatus('resolved')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.btnResolveText}>Tandai Selesai</Text>
+                  </TouchableOpacity>
+                ) : (
+                  /* Tombol Buka Kembali: mengaktifkan kembali percakapan menjadi 'open' */
+                  <TouchableOpacity
+                    style={styles.btnReopen}
+                    onPress={() => handleUpdateStatus('open')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.btnReopenText}>Buka Kembali</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Tombol Alihkan ke AI: mengubah status menjadi 'pending' (menunggu bot / tindak lanjut) */}
+                {selectedConversation.status !== 'pending' && selectedConversation.status !== 'resolved' && (
+                  <TouchableOpacity
+                    style={styles.btnSwitchAi}
+                    onPress={() => handleUpdateStatus('pending')}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.btnSwitchAiText}>Alihkan ke AI</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Tombol Hapus Percakapan */}
+                <TouchableOpacity
+                  style={styles.btnDeleteDetail}
+                  onPress={() => handleOpenDeleteDialog(selectedConversation)}
+                  activeOpacity={0.8}
+                  accessibilityLabel="Hapus percakapan ini"
+                >
+                  <AppIcon name="trash" size={12} color="#DC2626" />
+                  <Text style={styles.btnDeleteDetailText}>Hapus</Text>
+                </TouchableOpacity>
+              </ScrollView>
             </View>
           </View>
-
-          {/* Action Buttons: Status Transition (selalu 'open' | 'pending' | 'resolved') */}
-          <View style={styles.detailActionButtonsRow}>
-            <StatusBadge status={selectedConversation.status} />
-
-            {/* Tombol Ambil Alih (CS): mengubah status menjadi 'open' */}
-            {selectedConversation.status !== 'open' && selectedConversation.status !== 'resolved' && (
-              <TouchableOpacity
-                style={styles.btnTakeOver}
-                onPress={() => handleUpdateStatus('open')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.btnTakeOverText}>Ambil Alih (CS)</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Tombol Tandai Selesai: mengubah status menjadi 'resolved' */}
-            {selectedConversation.status !== 'resolved' ? (
-              <TouchableOpacity
-                style={styles.btnResolve}
-                onPress={() => handleUpdateStatus('resolved')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.btnResolveText}>Tandai Selesai</Text>
-              </TouchableOpacity>
-            ) : (
-              /* Tombol Buka Kembali: mengaktifkan kembali percakapan menjadi 'open' */
-              <TouchableOpacity
-                style={styles.btnReopen}
-                onPress={() => handleUpdateStatus('open')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.btnReopenText}>Buka Kembali</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Tombol Alihkan ke AI: mengubah status menjadi 'pending' (menunggu bot / tindak lanjut) */}
-            {selectedConversation.status !== 'pending' && selectedConversation.status !== 'resolved' && (
-              <TouchableOpacity
-                style={styles.btnSwitchAi}
-                onPress={() => handleUpdateStatus('pending')}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.btnSwitchAiText}>Alihkan ke AI</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Tombol Hapus Percakapan */}
-            <TouchableOpacity
-              style={styles.btnDeleteDetail}
-              onPress={() => handleOpenDeleteDialog(selectedConversation)}
-              activeOpacity={0.8}
-              accessibilityLabel="Hapus percakapan ini"
-            >
-              <AppIcon name="trash" size={12} color="#DC2626" />
-              <Text style={styles.btnDeleteDetailText}>Hapus</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
 
         {/* Status Sinkronisasi WhatsApp & Database */}
         <View style={styles.disclaimerBar}>
@@ -1697,7 +1779,14 @@ export function ConversationsView({
         )}
 
         {/* Chat History Thread */}
-        <ScrollView style={styles.chatThreadScroll} contentContainerStyle={styles.chatThreadContent}>
+        <ScrollView
+          ref={chatScrollRef}
+          style={[styles.chatThreadScroll, { backgroundColor: colors.chatCanvas }]}
+          contentContainerStyle={[styles.chatThreadContent, !isDesktop && styles.chatThreadContentMobile]}
+          onContentSizeChange={() => {
+            chatScrollRef.current?.scrollToEnd?.({ animated: false });
+          }}
+        >
           {isLoadingMessages ? (
             <View style={{ padding: 24, alignItems: 'center', gap: 8 }}>
               <ActivityIndicator size="small" color={COLORS.emerald} />
@@ -1741,6 +1830,7 @@ export function ConversationsView({
                   <View
                     style={[
                       styles.messageBubble,
+                      !isDesktop && styles.messageBubbleMobile,
                       isCustomer && styles.bubbleCustomer,
                       isCs && styles.bubbleCs,
                       isAi && styles.bubbleAi,
@@ -1766,11 +1856,13 @@ export function ConversationsView({
                     </View>
 
                     {/* Isi Pesan Teks */}
-                    <Text style={styles.bubbleText}>{msg.text}</Text>
+                    <Text style={[styles.bubbleText, !isDesktop && styles.bubbleTextMobile, { color: colors.textPrimary }]}>
+                      {msg.text}
+                    </Text>
 
                     {/* Waktu & Tanda Centang */}
                     <View style={styles.bubbleFooter}>
-                      <Text style={styles.bubbleTime}>{msg.time}</Text>
+                      <Text style={[styles.bubbleTime, { color: colors.textMuted }]}>{msg.time}</Text>
                       {isCs && (
                         <View style={styles.doubleCheckMark}>
                           <AppIcon name="check" size={11} color={COLORS.emerald} />
@@ -1785,17 +1877,17 @@ export function ConversationsView({
         </ScrollView>
 
         {/* Template Cepat (Canned Responses) */}
-        <View style={styles.quickRepliesStrip}>
-          <Text style={styles.quickReplyLabel}>Balasan Cepat:</Text>
+        <View style={[styles.quickRepliesStrip, !isDesktop && styles.quickRepliesStripMobile]}>
+          <Text style={[styles.quickReplyLabel, { color: colors.textSecondary }]}>Balasan Cepat:</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
             {QUICK_REPLIES.map((qr, index) => (
               <TouchableOpacity
                 key={index}
-                style={styles.quickReplyPill}
+                style={[styles.quickReplyPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
                 onPress={() => handleApplyQuickReply(qr)}
                 activeOpacity={0.7}
               >
-                <Text style={styles.quickReplyText} numberOfLines={1}>
+                <Text style={[styles.quickReplyText, { color: colors.textPrimary }]} numberOfLines={1}>
                   {qr}
                 </Text>
               </TouchableOpacity>
@@ -1804,7 +1896,7 @@ export function ConversationsView({
         </View>
 
         {/* Input Kirim Pesan CS */}
-        <View style={styles.inputArea}>
+        <View style={[styles.inputArea, !isDesktop && styles.inputAreaMobile, { backgroundColor: colors.surfaceCard, borderTopColor: colors.border }]}>
           {/* Banner Notifikasi Berhasil */}
           {sendSuccessNotice && (
             <View style={styles.sendSuccessBanner}>
@@ -1837,15 +1929,21 @@ export function ConversationsView({
             </View>
           )}
 
-          <View style={styles.inputWrapper}>
+          <View
+            style={[styles.inputWrapper, !isDesktop && styles.inputWrapperMobile, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderStrong }]}
+            // @ts-ignore
+            dataSet={{ inputContainer: 'true' }}
+          >
             <TextInput
-              style={styles.chatTextInput}
-              placeholder="Ketik balasan pesan agen CS (tekan Enter untuk kirim)..."
-              placeholderTextColor={COLORS.textMuted}
+              style={[styles.chatTextInput, { color: colors.textPrimary }]}
+              placeholder="Ketik balasan pesan agen CS..."
+              placeholderTextColor={colors.textPlaceholder}
               value={inputText}
               onChangeText={setInputText}
               multiline
               editable={!isSending}
+              // @ts-ignore
+              dataSet={{ embedded: 'true' }}
               onKeyPress={(e: any) => {
                 if (Platform.OS === 'web' && e.nativeEvent?.key === 'Enter' && !e.nativeEvent?.shiftKey) {
                   e.preventDefault();
@@ -1863,6 +1961,7 @@ export function ConversationsView({
             <TouchableOpacity
               style={[
                 styles.btnSend,
+                !isDesktop && styles.btnSendMobile,
                 (inputText.trim().length === 0 || isSending) && styles.btnSendDisabled,
               ]}
               onPress={() => handleSendMessage()}
@@ -1873,21 +1972,23 @@ export function ConversationsView({
               {isSending ? (
                 <>
                   <ActivityIndicator size="small" color="#FFFFFF" />
-                  <Text style={styles.btnSendText}>Mengirim...</Text>
+                  {isDesktop && <Text style={styles.btnSendText}>Mengirim...</Text>}
                 </>
               ) : (
                 <>
                   <AppIcon name="send" size={14} color="#FFFFFF" />
-                  <Text style={styles.btnSendText}>Kirim</Text>
+                  {isDesktop && <Text style={styles.btnSendText}>Kirim</Text>}
                 </>
               )}
             </TouchableOpacity>
           </View>
-          <View style={styles.inputFooterRow}>
+          <View style={[styles.inputFooterRow, !isDesktop && styles.inputFooterRowMobile]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
               <View style={styles.statusDotSmall} />
               <Text style={styles.inputHelperText}>
-                Terkirim langsung ke WhatsApp pelanggan & tersimpan di database Supabase.
+                {isDesktop
+                  ? 'Terkirim langsung ke WhatsApp pelanggan & tersimpan di database Supabase.'
+                  : 'WhatsApp & Supabase terhubung'}
               </Text>
             </View>
             {inputText.trim().length > 0 && (
@@ -1896,6 +1997,7 @@ export function ConversationsView({
           </View>
         </View>
       </View>
+    </KeyboardAvoidingView>
     );
   };
 
@@ -1934,14 +2036,20 @@ export function ConversationsView({
           )}
 
           {/* Search Kontak */}
-          <View style={styles.modalSearchBox}>
+          <View
+            style={styles.modalSearchBox}
+            // @ts-ignore
+            dataSet={{ inputContainer: 'true' }}
+          >
             <AppIcon name="search" size={14} color={COLORS.textSecondary} />
             <TextInput
               style={styles.modalSearchInput}
               placeholder="Cari nama atau nomor telepon..."
-              placeholderTextColor={COLORS.textMuted}
+              placeholderTextColor={colors.textPlaceholder}
               value={contactSearchQuery}
               onChangeText={setContactSearchQuery}
+              // @ts-ignore
+              dataSet={{ embedded: 'true' }}
             />
             {contactSearchQuery.length > 0 && (
               <TouchableOpacity onPress={() => setContactSearchQuery('')}>
@@ -2022,7 +2130,7 @@ export function ConversationsView({
             <TextInput
               style={styles.modalMessageInput}
               placeholder="Contoh: Halo Kak, terima kasih telah menghubungi tim layanan kami..."
-              placeholderTextColor={COLORS.textMuted}
+              placeholderTextColor={colors.textPlaceholder}
               value={newConvInitialMessage}
               onChangeText={setNewConvInitialMessage}
               multiline
@@ -2168,36 +2276,45 @@ export function ConversationsView({
   // UTAMA: RESPONSIVE SPLIT / SINGLE VIEW
   // ==========================================
   return (
-    <View style={styles.inboxWrapper}>
-      {/* Header Halaman Percakapan */}
-      <View style={styles.pageHeader}>
-        <View>
-          <View style={styles.pageTitleRow}>
-            <Text style={styles.pageTitle}>Pusat Percakapan</Text>
-            <View style={styles.modeBadge}>
-              <View style={styles.modeDot} />
-              <Text style={styles.modeBadgeText}>Penyimpanan Database Aktif</Text>
+    <View style={[styles.inboxWrapper, !isDesktop && selectedId !== null && styles.inboxWrapperDetailMobile, { backgroundColor: colors.background }]}>
+      {/* Header Halaman Percakapan: Tampil di desktop */}
+      {isDesktop && (
+        <View style={styles.pageHeader}>
+          <View>
+            <View style={styles.pageTitleRow}>
+              <Text style={[styles.pageTitle, { color: colors.textPrimary }]}>Pusat Percakapan</Text>
+              <View style={styles.modeBadge}>
+                <View style={styles.modeDot} />
+                <Text style={styles.modeBadgeText}>Penyimpanan Database Aktif</Text>
+              </View>
             </View>
+            <Text style={[styles.pageSubtitle, { color: colors.textSecondary }]}>
+              Kotak masuk terpadu respon pelanggan WhatsApp, eskalasi agen CS, dan pencatatan riwayat pesan Supabase.
+            </Text>
           </View>
-          <Text style={styles.pageSubtitle}>
-            Kotak masuk terpadu respon pelanggan WhatsApp, eskalasi agen CS, dan pencatatan riwayat pesan Supabase.
-          </Text>
-        </View>
 
-        {onNavigate && (
-          <TouchableOpacity
-            style={styles.btnConnectGateway}
-            onPress={() => onNavigate('settings')}
-            activeOpacity={0.8}
-          >
-            <AppIcon name="link" size={14} color={COLORS.forestDark} />
-            <Text style={styles.btnConnectGatewayText}>Setup Gateway WhatsApp</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+          {onNavigate && (
+            <TouchableOpacity
+              style={styles.btnConnectGateway}
+              onPress={() => onNavigate('settings')}
+              activeOpacity={0.8}
+            >
+              <AppIcon name="link" size={14} color={colors.textPrimary} />
+              <Text style={styles.btnConnectGatewayText}>Setup Gateway WhatsApp</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {/* Kontainer Komunikasi: Desktop (Split 2 Kolom) vs Mobile (Pindah Tampilan) */}
-      <View style={[styles.inboxContainer, !isDesktop && styles.inboxContainerMobile]}>
+      <View
+        style={[
+          styles.inboxContainer,
+          !isDesktop && styles.inboxContainerMobile,
+          !isDesktop && selectedId !== null && styles.inboxContainerMobileDetail,
+          { backgroundColor: colors.surfaceCard, borderColor: colors.border }
+        ]}
+      >
         {isDesktop ? (
           <>
             {renderConversationList()}
@@ -2219,10 +2336,13 @@ export function ConversationsView({
 // ==========================================
 // STYLING DETAIL INBOX CUSTOMER SERVICE
 // ==========================================
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemePalette) => StyleSheet.create({
   inboxWrapper: {
     flex: 1,
     gap: 16,
+  },
+  inboxWrapperDetailMobile: {
+    gap: 0,
   },
   pageHeader: {
     flexDirection: 'row',
@@ -2240,14 +2360,14 @@ const styles = StyleSheet.create({
   pageTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   modeBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.accentBorder,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -2262,21 +2382,21 @@ const styles = StyleSheet.create({
   modeBadgeText: {
     fontSize: 10,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     letterSpacing: 0.3,
   },
   pageSubtitle: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
     maxWidth: 620,
   },
   btnConnectGateway: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     borderRadius: 7,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -2285,37 +2405,31 @@ const styles = StyleSheet.create({
   btnConnectGatewayText: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
 
   // ----------------------------------------
   // KONTAINER UTAMA
   // ----------------------------------------
   inboxContainer: {
-    backgroundColor: COLORS.surface,
-    borderRadius: 10,
+    backgroundColor: colors.surfaceCard,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     flexDirection: 'row',
     flex: 1,
     minHeight: 480,
     overflow: 'hidden',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.03,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 1,
-      },
-    }),
+    ...SHADOWS.cardElevated,
   },
   inboxContainerMobile: {
     flexDirection: 'column',
     minHeight: 0,
     flex: 1,
+  },
+  inboxContainerMobileDetail: {
+    borderRadius: 0,
+    borderWidth: 0,
   },
 
   // ----------------------------------------
@@ -2325,7 +2439,7 @@ const styles = StyleSheet.create({
     width: 340,
     borderRightWidth: 1,
     borderRightColor: COLORS.border,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     flexDirection: 'column',
     height: '100%',
   },
@@ -2338,7 +2452,7 @@ const styles = StyleSheet.create({
   listSearchContainer: {
     padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
   },
   listSearchRow: {
     flexDirection: 'row',
@@ -2349,9 +2463,9 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 7,
     paddingHorizontal: 10,
     height: 36,
@@ -2359,9 +2473,15 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     fontSize: 12,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginLeft: 8,
     paddingVertical: 0,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   btnNewConversation: {
     flexDirection: 'row',
@@ -2394,9 +2514,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   btnRetryFetch: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: '#F87171',
+    borderColor: colors.dangerBorder,
     borderRadius: 4,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -2404,7 +2524,7 @@ const styles = StyleSheet.create({
   btnRetryFetchText: {
     fontSize: 10,
     fontWeight: '600',
-    color: '#DC2626',
+    color: colors.dangerText,
   },
   loadingContainer: {
     flex: 1,
@@ -2415,48 +2535,70 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
-  filterTabsRow: {
-    flexDirection: 'row',
-    paddingHorizontal: 10,
-    paddingVertical: 8,
+  filterTabsContainer: {
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    gap: 4,
-    flexWrap: 'wrap',
+    borderBottomColor: colors.border,
+    backgroundColor: colors.surfaceCard,
+    width: '100%',
+  },
+  filterTabsContent: {
+    flexDirection: 'row',
+    paddingLeft: 16,
+    paddingRight: 24,
+    paddingVertical: 8,
+    gap: 8,
+    alignItems: 'center',
   },
   filterTabItem: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 5,
-    backgroundColor: 'transparent',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: colors.surfaceSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
+    flexShrink: 0,
+    ...Platform.select({
+      web: {
+        whiteSpace: 'nowrap' as any,
+      },
+    }),
   },
   filterTabItemActive: {
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
+    borderColor: colors.accentBorder,
   },
   filterTabText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '500',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
+    ...Platform.select({
+      web: {
+        whiteSpace: 'nowrap' as any,
+      },
+    }),
   },
   filterTabTextActive: {
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     fontWeight: '700',
   },
   conversationScrollList: {
     flex: 1,
   },
+  conversationScrollListContent: {
+    paddingBottom: 88,
+  },
   convCard: {
     flexDirection: 'row',
     padding: 12,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
     gap: 10,
     alignItems: 'flex-start',
   },
   convCardSelected: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderLeftWidth: 3,
     borderLeftColor: COLORS.emerald,
   },
@@ -2475,6 +2617,7 @@ const styles = StyleSheet.create({
   },
   convContent: {
     flex: 1,
+    minWidth: 0,
   },
   convTopRow: {
     flexDirection: 'row',
@@ -2483,34 +2626,36 @@ const styles = StyleSheet.create({
     marginBottom: 1,
   },
   convName: {
-    fontSize: 13,
+    fontSize: 13.5,
+    lineHeight: 18,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     flex: 1,
+    minWidth: 0,
     marginRight: 6,
   },
   convNameSelected: {
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     fontWeight: '700',
   },
   convTime: {
     fontSize: 10,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
   },
   convPhone: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 4,
   },
   convSnippet: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 16,
     marginBottom: 6,
   },
   convSnippetBold: {
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   convFooterRow: {
     flexDirection: 'row',
@@ -2539,9 +2684,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
@@ -2549,13 +2694,13 @@ const styles = StyleSheet.create({
   listEmptyTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 4,
     textAlign: 'center',
   },
   listEmptyDesc: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 16,
     marginBottom: 14,
@@ -2575,9 +2720,9 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   btnResetFilter: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 6,
@@ -2585,7 +2730,7 @@ const styles = StyleSheet.create({
   btnResetFilterText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
 
   // ----------------------------------------
@@ -2593,43 +2738,65 @@ const styles = StyleSheet.create({
   // ----------------------------------------
   detailPanelDesktop: {
     flex: 1,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     height: '100%',
   },
   detailContainer: {
     flex: 1,
     flexDirection: 'column',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
+    height: '100%',
+  },
+  detailContainerMobile: {
+    flex: 1,
     height: '100%',
   },
   detailHeader: {
     paddingHorizontal: 18,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.border,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
     gap: 12,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
+  },
+  detailHeaderMobile: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+  },
+  detailHeaderTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flex: 1,
+    gap: 10,
+  },
+  detailHeaderTopRowMobile: {
+    width: '100%',
+    justifyContent: 'space-between',
   },
   detailHeaderCustomer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     flex: 1,
-    minWidth: 220,
+    minWidth: 0,
   },
   btnBackMobile: {
     width: 32,
     height: 32,
-    borderRadius: 6,
+    borderRadius: 7,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 4,
+    marginRight: 2,
   },
   detailAvatar: {
     width: 38,
@@ -2651,7 +2818,7 @@ const styles = StyleSheet.create({
   detailCustomerName: {
     fontSize: 14,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   tagBadge: {
     backgroundColor: 'rgba(23, 35, 31, 0.06)',
@@ -2662,12 +2829,12 @@ const styles = StyleSheet.create({
   tagBadgeText: {
     fontSize: 9,
     fontWeight: '700',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     letterSpacing: 0.3,
   },
   detailCustomerPhone: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 1,
   },
   detailActionButtonsRow: {
@@ -2676,10 +2843,16 @@ const styles = StyleSheet.create({
     gap: 8,
     flexWrap: 'wrap',
   },
+  detailActionButtonsRowMobile: {
+    width: '100%',
+    gap: 6,
+    justifyContent: 'flex-start',
+    paddingTop: 2,
+  },
   btnTakeOver: {
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.15)' : colors.accentSubtle,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.isDark ? 'rgba(45, 212, 191, 0.35)' : colors.accentBorder,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
@@ -2687,12 +2860,12 @@ const styles = StyleSheet.create({
   btnTakeOverText: {
     fontSize: 11,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.isDark ? '#34D399' : colors.textPrimary,
   },
   btnResolve: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.isDark ? '#303030' : colors.borderStrong,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
@@ -2700,12 +2873,12 @@ const styles = StyleSheet.create({
   btnResolveText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   btnReopen: {
-    backgroundColor: COLORS.warningBg,
+    backgroundColor: colors.isDark ? 'rgba(245, 158, 11, 0.15)' : COLORS.warningBg,
     borderWidth: 1,
-    borderColor: COLORS.warningBorder,
+    borderColor: colors.isDark ? 'rgba(245, 158, 11, 0.35)' : COLORS.warningBorder,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
@@ -2713,12 +2886,12 @@ const styles = StyleSheet.create({
   btnReopenText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.warningText,
+    color: colors.isDark ? '#FCD34D' : COLORS.warningText,
   },
   btnSwitchAi: {
-    backgroundColor: COLORS.purpleBg,
+    backgroundColor: colors.isDark ? 'rgba(99, 102, 241, 0.15)' : COLORS.purpleBg,
     borderWidth: 1,
-    borderColor: COLORS.purpleBorder,
+    borderColor: colors.isDark ? 'rgba(99, 102, 241, 0.35)' : COLORS.purpleBorder,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 6,
@@ -2726,32 +2899,32 @@ const styles = StyleSheet.create({
   btnSwitchAiText: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.purpleText,
+    color: colors.isDark ? '#A5B4FC' : COLORS.purpleText,
   },
 
   // Disclaimer / Sync Status banner
   disclaimerBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F0FDF4',
+    backgroundColor: colors.successBg,
     borderBottomWidth: 1,
-    borderBottomColor: '#DCFCE7',
+    borderBottomColor: colors.successBorder,
     paddingHorizontal: 14,
     paddingVertical: 7,
     gap: 8,
   },
   disclaimerText: {
     fontSize: 11,
-    color: '#166534',
+    color: colors.successText,
     flex: 1,
     lineHeight: 15,
   },
 
   // Handoff Status Banners & Tags
   handoffSentBanner: {
-    backgroundColor: '#F0FDF4',
+    backgroundColor: colors.successBg,
     borderBottomWidth: 1,
-    borderBottomColor: '#BBF7D0',
+    borderBottomColor: colors.successBorder,
     paddingHorizontal: 16,
     paddingVertical: 10,
     flexDirection: 'row',
@@ -2762,7 +2935,7 @@ const styles = StyleSheet.create({
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#DCFCE7',
+    backgroundColor: colors.accentSubtle,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 2,
@@ -2875,11 +3048,16 @@ const styles = StyleSheet.create({
   chatThreadScroll: {
     flex: 1,
     minHeight: 0,
-    backgroundColor: '#F7FAF8',
+    backgroundColor: colors.chatCanvas,
   },
   chatThreadContent: {
     padding: 16,
     gap: 12,
+  },
+  chatThreadContentMobile: {
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    gap: 10,
   },
   systemMessageContainer: {
     alignSelf: 'center',
@@ -2893,12 +3071,12 @@ const styles = StyleSheet.create({
   },
   systemMessageText: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
   },
   systemMessageTime: {
     fontSize: 9,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
     marginTop: 2,
   },
   messageRow: {
@@ -2917,20 +3095,42 @@ const styles = StyleSheet.create({
     padding: 12,
     gap: 4,
   },
+  messageBubbleMobile: {
+    maxWidth: '86%',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 12,
+  },
   bubbleCustomer: {
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : '#CBD5E1',
     borderTopLeftRadius: 2,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 1px 2px 0 rgba(15, 23, 42, 0.05)',
+      },
+      default: {
+        elevation: 1,
+      },
+    }),
   },
   bubbleCs: {
-    backgroundColor: COLORS.emeraldSubtle,
-    borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    backgroundColor: colors.isDark ? '#005C4B' : colors.chatCsBubble,
+    borderWidth: colors.isDark ? 0 : 1,
+    borderColor: colors.accentBorder,
     borderTopRightRadius: 2,
+    ...Platform.select({
+      web: {
+        boxShadow: '0 1px 2px 0 rgba(13, 148, 136, 0.08)',
+      },
+      default: {
+        elevation: 1,
+      },
+    }),
   },
   bubbleAi: {
-    backgroundColor: COLORS.purpleBg,
+    backgroundColor: colors.chatAiBubble,
     borderWidth: 1,
     borderColor: COLORS.purpleBorder,
     borderTopRightRadius: 2,
@@ -2946,10 +3146,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   senderCustomer: {
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   senderCs: {
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   senderAi: {
     color: COLORS.purpleText,
@@ -2967,8 +3167,12 @@ const styles = StyleSheet.create({
   },
   bubbleText: {
     fontSize: 13,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     lineHeight: 19,
+  },
+  bubbleTextMobile: {
+    fontSize: 13.5,
+    lineHeight: 19.5,
   },
   bubbleFooter: {
     flexDirection: 'row',
@@ -2979,7 +3183,7 @@ const styles = StyleSheet.create({
   },
   bubbleTime: {
     fontSize: 10,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
   },
   doubleCheckMark: {
     marginLeft: 2,
@@ -3003,12 +3207,12 @@ const styles = StyleSheet.create({
   emptyMessagesTitle: {
     fontSize: 13,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 4,
   },
   emptyMessagesDesc: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     maxWidth: 300,
     lineHeight: 16,
@@ -3020,20 +3224,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 8,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
+    borderTopColor: colors.border,
     gap: 8,
+  },
+  quickRepliesStripMobile: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 6,
   },
   quickReplyLabel: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   quickReplyPill: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -3041,16 +3250,20 @@ const styles = StyleSheet.create({
   },
   quickReplyText: {
     fontSize: 11,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
 
   // Input Box
   inputArea: {
     padding: 12,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    backgroundColor: COLORS.surface,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surfaceCard,
     gap: 6,
+  },
+  inputAreaMobile: {
+    padding: 8,
+    gap: 4,
   },
   sendErrorBanner: {
     flexDirection: 'row',
@@ -3101,20 +3314,31 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
+  inputWrapperMobile: {
+    borderRadius: 22,
+    paddingHorizontal: 12,
+    paddingVertical: 3,
+  },
   chatTextInput: {
     flex: 1,
     fontSize: 13,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     minHeight: 38,
     maxHeight: 90,
     paddingVertical: 6,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   btnSend: {
     flexDirection: 'row',
@@ -3124,6 +3348,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 6,
+  },
+  btnSendMobile: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 18,
+    gap: 4,
   },
   btnSendDisabled: {
     backgroundColor: COLORS.borderStrong,
@@ -3139,6 +3369,10 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 4,
   },
+  inputFooterRowMobile: {
+    paddingHorizontal: 4,
+    marginTop: 2,
+  },
   statusDotSmall: {
     width: 6,
     height: 6,
@@ -3147,11 +3381,11 @@ const styles = StyleSheet.create({
   },
   charCountText: {
     fontSize: 10,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
   },
   inputHelperText: {
     fontSize: 10,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
   },
 
   // Empty Detail Placeholder
@@ -3159,22 +3393,22 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'column',
     height: '100%',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
   },
   emptyDetailCenter: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 32,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.chatCanvas,
   },
   emptyDetailIconCircle: {
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 14,
@@ -3182,12 +3416,12 @@ const styles = StyleSheet.create({
   emptyDetailTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 6,
   },
   emptyDetailDesc: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     maxWidth: 380,
     lineHeight: 18,
@@ -3195,9 +3429,9 @@ const styles = StyleSheet.create({
   btnSelectFirst: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.accentBorder,
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: 7,
@@ -3206,22 +3440,22 @@ const styles = StyleSheet.create({
   btnSelectFirstText: {
     fontSize: 12,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   inputAreaDisabled: {
     padding: 12,
     borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    backgroundColor: COLORS.surfaceMuted,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surfaceSecondary,
     gap: 6,
   },
   inputWrapperDisabled: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.surfaceCard,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -3230,7 +3464,7 @@ const styles = StyleSheet.create({
   inputPlaceholderDisabled: {
     flex: 1,
     fontSize: 12,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
     fontStyle: 'italic',
   },
   btnSendDisabledPlaceholder: {
@@ -3245,7 +3479,7 @@ const styles = StyleSheet.create({
   btnSendDisabledText: {
     fontSize: 11,
     fontWeight: '700',
-    color: COLORS.textMuted,
+    color: colors.textMuted,
   },
 
   // ----------------------------------------
@@ -3276,9 +3510,9 @@ const styles = StyleSheet.create({
   badgeHandling: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.accentSubtle,
     borderWidth: 1,
-    borderColor: COLORS.emeraldBorder,
+    borderColor: colors.accentBorder,
     paddingHorizontal: 7,
     paddingVertical: 2.5,
     borderRadius: 4,
@@ -3293,12 +3527,15 @@ const styles = StyleSheet.create({
   badgeHandlingText: {
     fontSize: 10,
     fontWeight: '700',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
   },
   badgeResolved: {
-    backgroundColor: COLORS.surfaceMuted,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     paddingHorizontal: 7,
     paddingVertical: 2.5,
     borderRadius: 4,
@@ -3306,7 +3543,7 @@ const styles = StyleSheet.create({
   badgeResolvedText: {
     fontSize: 10,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
 
   // ----------------------------------------
@@ -3314,7 +3551,7 @@ const styles = StyleSheet.create({
   // ----------------------------------------
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    backgroundColor: colors.isDark ? 'rgba(0, 0, 0, 0.85)' : 'rgba(0, 0, 0, 0.45)',
     justifyContent: 'center',
     alignItems: 'center',
     padding: 16,
@@ -3322,10 +3559,10 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 480,
-    backgroundColor: COLORS.surface,
+    backgroundColor: colors.isDark ? '#101010' : colors.surfaceCard,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     padding: 20,
     maxHeight: '90%',
   },
@@ -3338,11 +3575,11 @@ const styles = StyleSheet.create({
   modalTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   modalSubtitle: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   modalCloseBtn: {
@@ -3351,7 +3588,9 @@ const styles = StyleSheet.create({
   modalErrorBanner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.dangerBg,
+    borderWidth: 1,
+    borderColor: colors.dangerBorder,
     borderRadius: 6,
     padding: 8,
     gap: 6,
@@ -3359,15 +3598,15 @@ const styles = StyleSheet.create({
   },
   modalErrorText: {
     fontSize: 11,
-    color: '#DC2626',
+    color: colors.dangerText,
     flex: 1,
   },
   modalSearchBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 7,
     paddingHorizontal: 10,
     height: 38,
@@ -3376,42 +3615,49 @@ const styles = StyleSheet.create({
   modalSearchInput: {
     flex: 1,
     fontSize: 12,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginLeft: 8,
     paddingVertical: 0,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   modalSectionLabel: {
     fontSize: 10,
     fontWeight: '700',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     letterSpacing: 0.5,
     marginBottom: 6,
   },
   modalContactsList: {
     maxHeight: 180,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 8,
+    backgroundColor: colors.isDark ? '#101010' : colors.surfaceCard,
   },
   modalContactItem: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 10,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: colors.isDark ? '#262626' : colors.border,
     gap: 10,
   },
   modalContactItemSelected: {
-    backgroundColor: COLORS.emeraldSubtle,
+    backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.15)' : colors.accentSubtle,
   },
   modalContactName: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   modalContactPhone: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   existingConvTag: {
     backgroundColor: 'rgba(22, 163, 106, 0.12)',
@@ -3429,7 +3675,7 @@ const styles = StyleSheet.create({
     height: 18,
     borderRadius: 9,
     borderWidth: 1.5,
-    borderColor: COLORS.borderStrong,
+    borderColor: colors.borderStrong,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -3446,31 +3692,37 @@ const styles = StyleSheet.create({
     padding: 20,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 8,
     borderStyle: 'dashed',
   },
   modalEmptyTitle: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   modalEmptyDesc: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 15,
   },
   modalMessageInput: {
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.isDark ? '#303030' : colors.border,
     borderRadius: 7,
     padding: 10,
     fontSize: 12,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     minHeight: 56,
     maxHeight: 90,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   modalFooterActions: {
     flexDirection: 'row',
@@ -3483,13 +3735,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: COLORS.borderStrong,
-    backgroundColor: COLORS.surface,
+    borderColor: colors.isDark ? '#303030' : colors.borderStrong,
+    backgroundColor: colors.isDark ? '#181818' : colors.surfaceCard,
   },
   modalBtnCancelText: {
     fontSize: 12,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   modalBtnSubmit: {
     paddingHorizontal: 16,
@@ -3527,9 +3779,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.isDark ? 'rgba(239, 68, 68, 0.15)' : '#FEF2F2',
     borderWidth: 1,
-    borderColor: '#FECACA',
+    borderColor: colors.isDark ? 'rgba(239, 68, 68, 0.35)' : '#FECACA',
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 5,
@@ -3537,7 +3789,7 @@ const styles = StyleSheet.create({
   btnDeleteDetailText: {
     fontSize: 11,
     fontWeight: '600',
-    color: '#DC2626',
+    color: colors.isDark ? '#FCA5A5' : '#DC2626',
   },
   deleteSuccessBanner: {
     flexDirection: 'row',
@@ -3578,13 +3830,13 @@ const styles = StyleSheet.create({
   deleteDialogTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 4,
     textAlign: 'center',
   },
   deleteDialogDesc: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 17,
     marginBottom: 12,
@@ -3593,9 +3845,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: COLORS.surfaceMuted,
+    backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 10,
     width: '100%',
@@ -3616,16 +3868,16 @@ const styles = StyleSheet.create({
   deleteTargetName: {
     fontSize: 13,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   deleteTargetPhone: {
     fontSize: 11,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   deleteTargetMsgCount: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
   },
   deleteDisclaimerBox: {
     backgroundColor: '#FFFBEB',

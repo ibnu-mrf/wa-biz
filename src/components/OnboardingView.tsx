@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   StyleSheet,
   Text,
@@ -9,9 +9,11 @@ import {
   ScrollView,
   Platform,
   useWindowDimensions,
+  Image,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { COLORS } from '../theme';
+import { COLORS, AppIcon, useTheme, ThemePalette } from '../theme';
+import { formatErrorUserMessage } from '../lib/errorHandler';
 
 // ==========================================
 // TIPE & PROPS ONBOARDING VIEW
@@ -22,6 +24,8 @@ export interface OnboardingViewProps {
 }
 
 export function OnboardingView({ onOrganizationCreated, onLogout }: OnboardingViewProps) {
+  const { isDark, colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
 
@@ -40,18 +44,11 @@ export function OnboardingView({ onOrganizationCreated, onLogout }: OnboardingVi
   ];
 
   // Helper terjemahan error Supabase ke Bahasa Indonesia
-  const translateRpcError = (err: string): string => {
-    const lower = err.toLowerCase();
-    if (lower.includes('permission denied')) {
-      return 'Izin ditolak. Pastikan sesi login Anda masih aktif.';
-    }
-    if (lower.includes('unique') || lower.includes('duplicate')) {
-      return 'Nama organisasi sudah terdaftar. Silakan gunakan nama lain.';
-    }
-    if (lower.includes('network') || lower.includes('fetch')) {
-      return 'Gagal terhubung ke server Supabase. Periksa koneksi internet Anda.';
-    }
-    return err || 'Terjadi kesalahan saat membuat organisasi. Silakan coba lagi.';
+  const translateRpcError = (err: unknown): string => {
+    return formatErrorUserMessage(err, {
+      entityName: 'organisasi',
+      defaultMessage: 'Gagal membuat organisasi. Pastikan sesi login aktif dan silakan coba lagi.',
+    });
   };
 
   const handleCreateOrganization = async () => {
@@ -78,16 +75,14 @@ export function OnboardingView({ onOrganizationCreated, onLogout }: OnboardingVi
       });
 
       if (error) {
-        setErrorMessage(translateRpcError(error.message));
+        setErrorMessage(translateRpcError(error));
       } else {
         setSuccessMessage('Organisasi berhasil dibuat! Membuka dashboard workspace...');
         // Muat ulang status organisasi di parent App.tsx
         await onOrganizationCreated();
       }
     } catch (err: unknown) {
-      const msg =
-        err instanceof Error ? err.message : 'Terjadi kendala saat memproses pembuatan organisasi.';
-      setErrorMessage(translateRpcError(msg));
+      setErrorMessage(translateRpcError(err));
     } finally {
       setIsLoading(false);
     }
@@ -102,12 +97,14 @@ export function OnboardingView({ onOrganizationCreated, onLogout }: OnboardingVi
       <View style={[styles.card, isDesktop ? styles.cardDesktop : styles.cardMobile]}>
         {/* BRAND HEADER */}
         <View style={styles.brandHeader}>
-          <View style={styles.brandLogoBox}>
-            <Text style={styles.brandLogoText}>W</Text>
-          </View>
+          <Image
+            source={require('../../assets/icon.png')}
+            style={styles.officialBrandLogo}
+            resizeMode="contain"
+            accessibilityLabel="WABiz"
+          />
           <View style={styles.brandTextGroup}>
             <View style={styles.brandTitleRow}>
-              <Text style={styles.brandTitle}>WABiz</Text>
               <View style={styles.brandTierBadge}>
                 <Text style={styles.brandTierText}>ONBOARDING</Text>
               </View>
@@ -130,7 +127,7 @@ export function OnboardingView({ onOrganizationCreated, onLogout }: OnboardingVi
         {errorMessage && (
           <View style={styles.errorBanner}>
             <View style={styles.errorIconCircle}>
-              <Text style={styles.errorIconText}>!</Text>
+              <AppIcon name="alert" size={13} color="#FFFFFF" />
             </View>
             <Text style={styles.errorBannerText}>{errorMessage}</Text>
           </View>
@@ -139,7 +136,7 @@ export function OnboardingView({ onOrganizationCreated, onLogout }: OnboardingVi
         {successMessage && (
           <View style={styles.successBanner}>
             <View style={styles.successIconCircle}>
-              <Text style={styles.successIconText}>✓</Text>
+              <AppIcon name="check" size={13} color="#FFFFFF" />
             </View>
             <Text style={styles.successBannerText}>{successMessage}</Text>
           </View>
@@ -154,7 +151,7 @@ export function OnboardingView({ onOrganizationCreated, onLogout }: OnboardingVi
             <TextInput
               style={styles.textInput}
               placeholder="misal: Pesantren Darul Ulum, CV Berkah Abadi, dll."
-              placeholderTextColor={COLORS.textMuted}
+              placeholderTextColor={colors.textPlaceholder}
               value={orgName}
               onChangeText={setOrgName}
               autoCapitalize="words"
@@ -219,10 +216,10 @@ export function OnboardingView({ onOrganizationCreated, onLogout }: OnboardingVi
 // ==========================================
 // STYLESHEET
 // ==========================================
-const styles = StyleSheet.create({
+const createStyles = (colors: ThemePalette) => StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F7F6',
+    backgroundColor: colors.background,
   },
   scrollContent: {
     flexGrow: 1,
@@ -232,11 +229,10 @@ const styles = StyleSheet.create({
     minHeight: '100%',
   },
   card: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surfaceCard,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#E4EAE6',
-    padding: 32,
+    borderColor: colors.border,
     ...Platform.select({
       web: {
         boxShadow: '0 8px 30px rgba(18, 60, 50, 0.08)',
@@ -249,9 +245,11 @@ const styles = StyleSheet.create({
   cardDesktop: {
     width: 520,
     maxWidth: '100%',
+    padding: 32,
   },
   cardMobile: {
     width: '100%',
+    padding: 20,
   },
   brandHeader: {
     flexDirection: 'row',
@@ -262,21 +260,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F0F4F2',
   },
-  brandLogoBox: {
-    width: 46,
-    height: 46,
+  officialBrandLogo: {
+    width: 52,
+    height: 52,
     borderRadius: 12,
-    backgroundColor: COLORS.forestDark,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1.5,
-    borderColor: COLORS.emerald,
-  },
-  brandLogoText: {
-    fontSize: 22,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: 0.5,
   },
   brandTextGroup: {
     flex: 1,
@@ -289,7 +276,7 @@ const styles = StyleSheet.create({
   brandTitle: {
     fontSize: 22,
     fontWeight: '800',
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     letterSpacing: -0.5,
   },
   brandTierBadge: {
@@ -308,7 +295,7 @@ const styles = StyleSheet.create({
   },
   brandSubtitle: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginTop: 2,
   },
   welcomeBox: {
@@ -317,12 +304,12 @@ const styles = StyleSheet.create({
   welcomeTitle: {
     fontSize: 20,
     fontWeight: '700',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
     marginBottom: 8,
   },
   welcomeDesc: {
     fontSize: 13,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     lineHeight: 20,
   },
   errorBanner: {
@@ -396,24 +383,30 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 13,
     fontWeight: '600',
-    color: COLORS.textDark,
+    color: colors.textPrimary,
   },
   requiredStar: {
     color: '#DC2626',
   },
   textInput: {
-    backgroundColor: '#FAFCFB',
+    backgroundColor: colors.inputBg,
     borderWidth: 1,
-    borderColor: '#D7DFDB',
+    borderColor: colors.inputBorder,
     borderRadius: 8,
     paddingHorizontal: 14,
     paddingVertical: 11,
     fontSize: 14,
-    color: COLORS.textDark,
+    color: colors.textPrimary,
+    ...Platform.select({
+      web: {
+        outlineStyle: 'none',
+        outlineWidth: 0,
+      } as any,
+    }),
   },
   helperText: {
     fontSize: 11,
-    color: COLORS.textMuted,
+    color: colors.textMuted,
     marginTop: 2,
   },
   presetsWrapper: {
@@ -422,7 +415,7 @@ const styles = StyleSheet.create({
   presetsTitle: {
     fontSize: 11,
     fontWeight: '600',
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
     marginBottom: 6,
   },
   presetsList: {
@@ -440,7 +433,7 @@ const styles = StyleSheet.create({
   },
   presetChipText: {
     fontSize: 11,
-    color: COLORS.forestDark,
+    color: colors.textPrimary,
     fontWeight: '500',
   },
   submitButton: {
@@ -485,7 +478,7 @@ const styles = StyleSheet.create({
   },
   logoutText: {
     fontSize: 12,
-    color: COLORS.textSecondary,
+    color: colors.textSecondary,
   },
   logoutLink: {
     fontSize: 12,

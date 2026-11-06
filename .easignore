@@ -1,0 +1,57 @@
+# ==========================================
+# EAS BUILD IGNORE (.easignore)
+# Mengatur file yang dikirim ke EAS Cloud Build
+# ==========================================
+
+# Dependencies & Package Managers
+node_modules/
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Expo & Web Builds
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native Generated Folders & Keystores / Certificates
+/ios
+/android
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+
+# Environment Variables & Kredensial Rahasia
+.env
+.env.*
+.env*.local
+!.env.example
+
+# Backend WhatsApp Worker & Baileys Sessions
+server/
+
+# Database Migrations & Edge Functions (Supabase)
+supabase/
+
+# Testing & QA Artifacts
+tests/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Temporary, Scratch & Local Tools
+scratch/
+.eas-inspect/
+.vscode/
+
+# Aset Arsip & Duplikat Tidak Terpakai (Hemat ~2.5 MB)
+assets/official/
+
+# Catatan: Direktori 'assets/' WAJIB disertakan untuk ikon dan splash screen native
+
