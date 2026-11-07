@@ -1800,6 +1800,8 @@ function AppContent() {
                 !isDesktop && styles.scrollContentMobile,
               ]}
               showsVerticalScrollIndicator={false}
+              nestedScrollEnabled={true}
+              keyboardShouldPersistTaps="handled"
             >
               {currentUserRole === 'member' && (activeNav === 'team' || activeNav === 'settings') && (
                 <View

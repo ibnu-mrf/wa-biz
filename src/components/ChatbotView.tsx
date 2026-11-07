@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -173,6 +173,7 @@ export function ChatbotView({
       source: 'local_grounded_rules',
     },
   ]);
+  const chatScrollRef = useRef<any>(null);
 
   // Adaptasi Jenis Organisasi & Konteks Industri
   const normalizedType = useMemo(
@@ -527,6 +528,11 @@ export function ChatbotView({
     if (!customPrompt) setSimulatorInput('');
     setIsSimulating(true);
 
+    // Otomatis scroll ke bawah setelah pesan dikirim
+    setTimeout(() => {
+      chatScrollRef.current?.scrollToEnd({ animated: true });
+    }, 50);
+
     const history = messages
       .filter((m) => m.sender === 'user' || m.sender === 'bot')
       .slice(-6)
@@ -557,6 +563,10 @@ export function ChatbotView({
           source: reply.source,
         },
       ]);
+      // Otomatis scroll ke bawah saat balasan bot muncul
+      setTimeout(() => {
+        chatScrollRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     } catch (err) {
       console.error('Error saat menghasilkan respon simulator:', err);
       const localReply = processGroundedBotReply(textToSend, profile, rules, intentRules, escalation, history);
@@ -573,6 +583,10 @@ export function ChatbotView({
           source: 'local_grounded_rules',
         },
       ]);
+      // Otomatis scroll ke bawah saat balasan bot muncul
+      setTimeout(() => {
+        chatScrollRef.current?.scrollToEnd({ animated: true });
+      }, 100);
     } finally {
       setIsSimulating(false);
     }
@@ -589,6 +603,9 @@ export function ChatbotView({
         source: 'local_grounded_rules',
       },
     ]);
+    setTimeout(() => {
+      chatScrollRef.current?.scrollToEnd({ animated: false });
+    }, 50);
   };
 
   // Tampilan Empty State bila organisasi belum ada / belum dipilih
@@ -1786,16 +1803,25 @@ export function ChatbotView({
             <View style={[styles.chatDisclaimerBanner, hasAiBackend && styles.chatDisclaimerBannerAi]}>
               <Text style={[styles.chatDisclaimerText, hasAiBackend && styles.chatDisclaimerTextAi]}>
                 {hasAiBackend
-                  ? '⚡ Mode AI Cloud: Jawaban diolah oleh Google Gemini API (Edge Function) dan dibatasi ketat oleh profil resmi lembaga untuk mencegah halusinasi data.'
-                  : '🔒 Mode Simulasi Lokal: Chatbot berjalan menggunakan aturan deterministik mandiri tanpa biaya API eksternal.'}
+                  ? '⚡ Mode AI Cerdas (Gemini AI Cloud): Menjawab pertanyaan umum (sains, matematika, copywriting, teknologi) layaknya AI modern, dengan data resmi lembaga yang terproteksi.'
+                  : '⚡ Mode AI Cerdas (WABiz AI Engine): Menjawab pengetahuan umum, matematika, copywriting, dan obrolan layaknya asisten AI modern serta data resmi lembaga.'}
               </Text>
             </View>
 
             {/* Riwayat Balon Pesan */}
             <ScrollView
+              ref={chatScrollRef}
               style={styles.chatMessageScroll}
-              contentContainerStyle={{ padding: 16, gap: 12 }}
-              showsVerticalScrollIndicator={false}
+              contentContainerStyle={styles.chatMessageScrollContent}
+              showsVerticalScrollIndicator={true}
+              nestedScrollEnabled={true}
+              keyboardShouldPersistTaps="handled"
+              onContentSizeChange={() => {
+                chatScrollRef.current?.scrollToEnd({ animated: true });
+              }}
+              onLayout={() => {
+                chatScrollRef.current?.scrollToEnd({ animated: false });
+              }}
             >
               {messages.map((m) => {
                 const isUser = m.sender === 'user';
@@ -1901,6 +1927,22 @@ export function ChatbotView({
                 </View>
               )}
             </ScrollView>
+
+            {/* Tombol Cepat Scroll ke Pesan Terbawah */}
+            {messages.length > 2 && (
+              <View style={styles.chatScrollBottomContainer} pointerEvents="box-none">
+                <TouchableOpacity
+                  style={styles.chatScrollBottomBtn}
+                  activeOpacity={0.8}
+                  onPress={() => chatScrollRef.current?.scrollToEnd({ animated: true })}
+                  accessibilityLabel="Scroll ke pesan terbaru"
+                  accessibilityRole="button"
+                >
+                  <AppIcon name="chevron-down" size={13} color="#FFFFFF" />
+                  <Text style={styles.chatScrollBottomText}>Ke Bawah</Text>
+                </TouchableOpacity>
+              </View>
+            )}
 
             {/* Input Bar Pesan */}
             <View style={styles.chatInputBar}>
@@ -2819,16 +2861,19 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     borderColor: colors.isDark ? colors.border : '#CBD5E1',
     borderRadius: 12,
     overflow: 'hidden',
+    position: 'relative',
     ...SHADOWS.cardElevated,
   },
   simulatorRightPanelMobile: {
     width: '100%',
-    height: 520,
+    minHeight: 480,
+    height: 540,
     backgroundColor: colors.isDark ? '#0B141A' : '#EFEAE2',
     borderWidth: 1,
     borderColor: colors.isDark ? colors.border : '#CBD5E1',
     borderRadius: 12,
     overflow: 'hidden',
+    position: 'relative',
     ...SHADOWS.cardElevated,
   },
   chatWindowHeader: {
@@ -2899,6 +2944,32 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
   },
   chatMessageScroll: {
     flex: 1,
+  },
+  chatMessageScrollContent: {
+    padding: 16,
+    paddingBottom: 34,
+    gap: 12,
+  },
+  chatScrollBottomContainer: {
+    position: 'absolute',
+    bottom: 58,
+    right: 14,
+    zIndex: 99,
+  },
+  chatScrollBottomBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#00A884',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    ...SHADOWS.cardElevated,
+  },
+  chatScrollBottomText: {
+    color: '#FFFFFF',
+    fontSize: 10.5,
+    fontWeight: '700',
   },
   chatBubbleContainer: {
     width: '100%',

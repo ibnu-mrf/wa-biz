@@ -175,6 +175,18 @@ test.describe('Chatbot AI General Intelligence & Simulator Tests', () => {
     await page.waitForTimeout(600);
     await expect(page.getByText(/lelucon untuk Anda/i).last()).toBeVisible();
 
+    // 5. Uji Puisi / Karya Sastra
+    await chatInput.fill('Buatkan puisi singkat');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(600);
+    await expect(page.getByText(/MENENUN CAHAYA MASA DEPAN/i).last()).toBeVisible();
+
+    // 6. Uji Tombol Scroll ke Bawah
+    const scrollBottomBtn = page.getByRole('button', { name: 'Scroll ke pesan terbaru' });
+    await expect(scrollBottomBtn).toBeVisible();
+    await scrollBottomBtn.click();
+    await page.waitForTimeout(400);
+
     // Ambil tangkapan layar bukti verifikasi
     await page.screenshot({
       path: path.join(SCREENSHOTS_DIR, 'verify_chatbot_general_ai_intelligence.png'),

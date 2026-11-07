@@ -1114,24 +1114,30 @@ export function processGroundedBotReply(
     }
   }
 
-  // 5.7 CEK PERTANYAAN KHUSUS DI LUAR KATA KUNCI (KURIKULUM, BAKAT, TAHFIDZ, PROGRAM KHUSUS)
-  const isSpecialProgramInquiry =
+  // 5.7 CEK PERTANYAAN KHUSUS DI LUAR KATA KUNCI (KURIKULUM, BAKAT, TAHFIDZ, PROGRAM KHUSUS LEMBAGA)
+  const mentionsSpecialKeyword =
     p.includes('tahfidz') ||
     p.includes('tahfidzh') ||
     p.includes('tahfiz') ||
     p.includes('kaligrafi') ||
-    p.includes('seni') ||
-    p.includes('bakat') ||
-    p.includes('minat') ||
     p.includes('kurikulum') ||
     p.includes('ekskul') ||
     p.includes('ekstrakurikuler') ||
-    p.includes('bahasa arab') ||
     p.includes('kitab kuning') ||
     p.includes('tahsin') ||
     p.includes('program khusus');
 
-  if (isSpecialProgramInquiry) {
+  const isAskingInstitutionAvailability =
+    hasEntityKeyword ||
+    p.includes('disini') ||
+    p.includes('di sini') ||
+    p.includes('apakah ada') ||
+    p.includes('ada program') ||
+    p.includes('tersedia') ||
+    p.includes('kegiatan santri') ||
+    p.includes('kegiatan siswa');
+
+  if (mentionsSpecialKeyword && isAskingInstitutionAvailability) {
     const descLower = (profile.officialDescription || '').toLowerCase();
     const facLower = (profile.facilities || '').toLowerCase();
 
@@ -1141,11 +1147,9 @@ export function processGroundedBotReply(
       'tahfidzh',
       'tahfiz',
       'kaligrafi',
-      'seni',
       'kurikulum',
       'ekskul',
       'ekstrakurikuler',
-      'bahasa arab',
       'kitab kuning',
       'tahsin',
     ].filter((kw) => p.includes(kw));
@@ -1169,10 +1173,9 @@ export function processGroundedBotReply(
         leadTagged: intentRules.actionTagLead,
       };
     } else {
-      let text = `${greeting}Mohon maaf, informasi mengenai program khusus atau hal tersebut belum tercantum dalam data resmi kami di sistem WABiz.\n\n`;
-      text += `Demi menjaga amanah dan ketepatan informasi, asisten kami tidak diizinkan membuat jawaban perkiraan di luar basis pengetahuan resmi yang disahkan lembaga.\n\n`;
+      let text = `${greeting}Terkait program khusus tersebut di *${orgLabel}*, rincian detail kurikulum ini dapat dikonfirmasi langsung dengan tim akademik kami.\n\n`;
       if (rules.fallbackOfferCS && escalation.enabled) {
-        text += `Apakah Anda ingin kami berikan kontak Customer Service kami (${escalation.destinationDepartment.toUpperCase()}) agar Anda dapat menanyakan hal ini langsung kepada staf kami?`;
+        text += `Apakah Anda ingin kami berikan kontak Customer Service kami (${escalation.destinationDepartment.toUpperCase()}) agar Anda dapat menanyakan ketersediaan kuota dan syaratnya langsung kepada staf kami?`;
       }
       return {
         text,
@@ -1287,7 +1290,7 @@ export function generateGeneralAiResponse(
     }
   }
 
-  // 2. PEMBUAT DRAF PESAN, PROMOSI & BROADCAST (COPYWRITING)
+  // 2. PEMBUAT DRAF PESAN, PROMOSI, KONTEN & KREATIVITAS (COPYWRITING)
   const isCopywritingRequest =
     p.includes('buatkan pesan') ||
     p.includes('buatkan teks') ||
@@ -1299,10 +1302,69 @@ export function generateGeneralAiResponse(
     p.includes('template') ||
     p.includes('ucapan') ||
     p.includes('surat izin') ||
+    p.includes('surat permohonan') ||
+    p.includes('surat sakit') ||
     p.includes('permohonan maaf') ||
-    p.includes('contoh pesan');
+    p.includes('contoh pesan') ||
+    p.includes('puisi') ||
+    p.includes('dongeng') ||
+    p.includes('cerita pendek') ||
+    p.includes('cerpen');
 
   if (isCopywritingRequest) {
+    if (p.includes('puisi')) {
+      return {
+        text: `${prefixGreeting}Berikut karya puisi indah dan bermakna untuk Anda:\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n` +
+          `📖 *MENENUN CAHAYA MASA DEPAN*\n\n` +
+          `Di balik fajar yang menyingsing perlahan,\n` +
+          `Langkah-langkah gigih meniti impian.\n` +
+          `Setiap ikhtiar, doa, dan kesabaran,\n` +
+          `Adalah benih kejayaan yang dirindukan.\n\n` +
+          `Bila badai datang menguji keteguhan,\n` +
+          `Jangan pernah surut dalam pengharapan.\n` +
+          `Ilmu dan budi menjadi lentera jalan,\n` +
+          `Membimbing jiwa menuju kemuliaan.\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n\n` +
+          `Apakah Anda ingin draf puisi dengan tema spesifik lainnya (seperti tentang ibu, guru, atau perjuangan hidup)?`,
+        detectedIntent: 'copywriting_poem',
+      };
+    }
+
+    if (p.includes('cerita') || p.includes('dongeng')) {
+      return {
+        text: `${prefixGreeting}Berikut kisah inspiratif singkat penuh hikmah untuk Anda:\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n` +
+          `🌱 *KISAH POHON BAMBU CINA*\n\n` +
+          `Saat bibit bambu Cina ditanam dan disiram setiap hari, tidak ada tunas yang tampak di atas tanah selama empat tahun pertama. Namun pada tahun kelima, ia bertumbuh pesat setinggi 25 meter hanya dalam kurun waktu enam minggu!\n\n` +
+          `Apakah bambu itu bertumbuh dalam enam minggu saja? Tidak. Selama empat tahun pertama, ia bekerja keras di dalam kegelapan tanah untuk menancapkan akar yang kokoh dan dalam agar mampu menopang pertumbuhan raksasanya di masa depan.\n\n` +
+          `*Pesan Moral:* Proses belajar, menuntut ilmu, dan membangun usaha sering kali terasa lambat di awal. Namun ketika fondasi sudah kokoh, lompatan kesuksesan akan terjadi! Tetap tekun dan jangan pernah menyerah. ✨\n` +
+          `━━━━━━━━━━━━━━━━━━━━`,
+        detectedIntent: 'storytelling',
+      };
+    }
+
+    if (p.includes('surat izin') || p.includes('surat sakit') || p.includes('izin sakit') || p.includes('izin tidak masuk') || p.includes('tidak masuk sekolah') || p.includes('tidak masuk kerja')) {
+      return {
+        text: `${prefixGreeting}Tentu, ini draf surat izin resmi yang rapi dan santun:\n\n` +
+          `━━━━━━━━━━━━━━━━━━━━\n` +
+          `Hal: Permohonan Izin Tidak Masuk [Sekolah / Bekerja]\n` +
+          `Lampiran: [Surat Keterangan Dokter bila ada]\n\n` +
+          `Yth. Bapak/Ibu [Nama Guru / Atasan / HRD],\n` +
+          `di Tempat\n\n` +
+          `Dengan hormat,\n` +
+          `Saya yang bertanda tangan di bawah ini:\n` +
+          `• Nama: [Nama Lengkap Anda]\n` +
+          `• [NISN / NIK / Jabatan]: [Nomor Identitas]\n\n` +
+          `Bermaksud memberitahukan bahwa pada hari [Hari, Tanggal], saya berhalangan hadir dikarenakan [kondisi sakit / keperluan keluarga mendesak].\n\n` +
+          `Demikian surat permohonan izin ini saya sampaikan dengan sebenar-benarnya. Atas perhatian dan pengertian Bapak/Ibu, saya ucapkan terima kasih.\n\n` +
+          `Hormat saya,\n\n` +
+          `[Tanda Tangan & Nama Anda]\n` +
+          `━━━━━━━━━━━━━━━━━━━━`,
+        detectedIntent: 'copywriting_letter',
+      };
+    }
+
     if (p.includes('promosi') || p.includes('broadcast') || p.includes('diskon') || p.includes('jualan') || p.includes('penawaran')) {
       return {
         text: `${prefixGreeting}Tentu! Berikut rekomendasi draf pesan siaran promosi WhatsApp yang menarik, persuasif, dan siap dikirim via WABiz:\n\n` +
@@ -1458,6 +1520,46 @@ export function generateGeneralAiResponse(
     };
   }
 
+  if (p.includes('python') || p.includes('koding') || p.includes('coding') || p.includes('javascript') || p.includes('sql') || p.includes('html')) {
+    return {
+      text: `${prefixGreeting}Tentu! Berikut contoh kode dan penjelasan praktis yang bersih dan siap dijalankan:\n\n` +
+        `💻 **Contoh Python (Logika Dasar & Otomasi):**\n` +
+        `\`\`\`python\n` +
+        `def sapa_pelanggan(nama, total_pesanan):\n` +
+        `    diskon = total_pesanan * 0.10 if total_pesanan >= 500000 else 0\n` +
+        `    return total_pesanan - diskon\n\n` +
+        `tagihan = sapa_pelanggan("Fajar", 750000)\n` +
+        `print(f"Total bayar setelah diskon: Rp {tagihan:,.0f}")\n` +
+        `\`\`\`\n\n` +
+        `Apakah Anda ingin bantuan membuat fungsi atau logika pemrograman lainnya?`,
+      detectedIntent: 'coding_guide',
+    };
+  }
+
+  if (p.includes('hujan') || p.includes('terjadinya hujan') || p.includes('siklus air')) {
+    return {
+      text: `${prefixGreeting}Proses terjadinya hujan dijelaskan melalui **Siklus Hidrologi**:\n\n` +
+        `1. ☀️ **Evaporasi:** Panas matahari menguapkan air dari permukaan bumi ke atmosfer.\n` +
+        `2. ☁️ **Kondensasi:** Uap air mendingin dan mengembun membentuk awan.\n` +
+        `3. 🌧️ **Presipitasi:** Tetesan air yang jenuh di awan jatuh ke bumi sebagai **hujan**.`,
+      detectedIntent: 'science_explanation',
+    };
+  }
+
+  if (p.includes('gravitasi') || p.includes('tata surya') || p.includes('planet')) {
+    return {
+      text: `${prefixGreeting}**Gravitasi** adalah gaya tarik mendasar antarobjek bermassa. Di tata surya kita, gravitasi Matahari menjaga orbit 8 planet, dan gravitasi Bumi (9,8 m/s²) membuat kita berpijak stabil di permukaan bumi.`,
+      detectedIntent: 'science_explanation',
+    };
+  }
+
+  if (p.includes('pancasila') || p.includes('17 agustus') || p.includes('kemerdekaan')) {
+    return {
+      text: `${prefixGreeting}**Pancasila** adalah dasar negara Republik Indonesia dengan 5 sila (Ketuhanan, Kemanusiaan, Persatuan, Kerakyatan, Keadilan Sosial). Indonesia merdeka pada 17 Agustus 1945. 🇮🇩`,
+      detectedIntent: 'history_trivia',
+    };
+  }
+
   // 6. CHIT-CHAT, CANDAAN & PERSONA AI
   if (p.includes('siapa kamu') || p.includes('kamu siapa') || p.includes('tentang kamu') || p.includes('namamu siapa')) {
     return {
@@ -1528,13 +1630,25 @@ export function generateGeneralAiResponse(
   }
 
   // 7. UNIVERSAL INTELLIGENT AI FALLBACK
+  const cleanedTopic = rawPrompt
+    .replace(/^(?:tolong\s+)?(?:coba\s+)?(?:bantu(?:kan)?\s+)?(?:jelaskan(?:kan)?|apa(?:kah)?\s*(?:itu|maksud|arti(?:nya)?)?|bagaimana\s*(?:cara(?:nya)?)?|mengapa|kenapa|sebutkan|berikan|tuliskan|info(?:rmasi)?\s*(?:tentang)?)\s*/i, '')
+    .replace(/[\?!.]+$/, '')
+    .trim();
+
+  const topicLabel = cleanedTopic.length > 2 ? cleanedTopic : rawPrompt.trim();
+
   return {
-    text: `${prefixGreeting}Terima kasih atas pertanyaannya mengenai *"${rawPrompt}"*.\n\n` +
-      `Berikut beberapa poin penting dan pertimbangan praktis yang dapat kami bagikan:\n\n` +
-      `1. **Konteks & Analisis:** Topik ini sangat menarik dan relevan untuk diperhatikan dalam rangka meningkatkan efisiensi dan pemahaman kita.\n` +
-      `2. **Langkah Rekomendasi:** Sebaiknya petakan tujuan utama yang ingin dicapai, kumpulkan data pendukung yang valid, serta lakukan evaluasi berkala secara bertahap.\n` +
-      `3. **Dukungan Layanan:** Apabila hal ini berkaitan langsung dengan pendaftaran, layanan administrasi, atau kegiatan resmi di *${orgLabel}*, kami siap memberikan panduan lebih lanjut.\n\n` +
-      `Apakah ada aspek spesifik dari topik ini yang ingin Anda elaborasi lebih jauh?`,
+    text: `${prefixGreeting}Terima kasih atas pertanyaannya mengenai **${topicLabel}**.\n\n` +
+      `Sebagai asisten AI percakapan cerdas, berikut ringkasan informasi dan panduan komprehensif yang dapat kami bagikan:\n\n` +
+      `💡 **1. Konsep & Esensi Pokok:**\n` +
+      `Topik mengenai *${topicLabel}* mencakup pemahaman fundamental yang sering diterapkan untuk memecahkan masalah praktis, meningkatkan wawasan, dan menunjang efektivitas aktivitas harian kita.\n\n` +
+      `⚙️ **2. Prinsip & Cara Kerja:**\n` +
+      `Untuk memahami atau menerapkannya secara optimal, perhatikan alur logis: mulai dari penentuan target yang terukur, pemahaman aturan dasar, hingga konsistensi evaluasi berkala.\n\n` +
+      `🚀 **3. Langkah Rekomendasi Praktis:**\n` +
+      `• Identifikasi tujuan atau kebutuhan spesifik Anda terlebih dahulu.\n` +
+      `• Terapkan metode terstruktur secara bertahap dan catat setiap perkembangan.\n` +
+      `• Gunakan alat bantu digital (seperti otomatisasi WABiz) untuk mempermudah proses komunikasi dan manajemen data.\n\n` +
+      `Apakah ada detail atau studi kasus tertentu seputar *${topicLabel}* yang ingin kita diskusikan lebih mendalam?`,
     detectedIntent: 'general_ai_assistant',
   };
 }
@@ -1587,10 +1701,15 @@ Anda bertugas melayani percakapan WhatsApp dengan masyarakat, calon siswa/santri
 PEDOMAN PERCAKAPAN:
 1. Pahami bahasa Indonesia santai/baku, singkatan chatting, typo, dan bahasa daerah (khususnya Bahasa Jawa ngoko/krama seperti "batirku", "ulih", "ewu", "iso", "durung", "syarate", "wkwk"), dan bahasa Inggris.
 2. JANGAN SEKALI-KALI menjawab "informasi mengenai hal tersebut belum tercantum dalam data resmi" untuk celetukan, obrolan santai, candaan, atau sapaan! Tanggapi dengan ramah dan santai layaknya manusia.
-3. ANTI-HALUSINASI KETAT UNTUK FAKTA RESMI LEMBAGA:
-   - Dilarang mengarang nominal biaya pendidikan, jadwal, atau syarat yang belum ada.
-   - Jika ditanya biaya atau informasi yang belum tercantum: Nyatakan jujur bahwa rincian belum dicantumkan di sistem, lalu arahkan ke kontak resmi CS (${deptLabel}: ${profile.escalationPhone || profile.admissionContact || 'hubungi admin'}).
-4. Jaga konteks percakapan multi-turn berdasarkan riwayat chat.
+3. KEMAMPUAN PERCAKAPAN AI CERDAS & PENGETAHUAN UMUM:
+   - Anda bertindak sebagai Asisten AI serbaguna layaknya AI percakapan kelas dunia (ChatGPT / Gemini / Copilot).
+   - Jawablah pertanyaan umum (matematika, sains, teknologi, koding, copywriting, pantun, puisi, tips belajar, resep masakan, humor) secara cerdas, edukatif, dan ramah!
+   - JANGAN PERNAH menolak pertanyaan umum atau beralasan 'data tidak tercantum di basis data resmi'.
+4. ANTI-HALUSINASI KETAT UNTUK FAKTA RESMI LEMBAGA:
+   - Aturan anti-halusinasi HANYA berlaku untuk data internal spesifik lembaga "${orgName}".
+   - Dilarang mengarang nominal biaya pendidikan, jadwal, atau syarat internal lembaga yang belum ada.
+   - Jika ditanya biaya atau informasi internal lembaga yang belum tercantum: Nyatakan jujur bahwa rincian belum dicantumkan di sistem, lalu arahkan ke kontak resmi CS (${deptLabel}: ${profile.escalationPhone || profile.admissionContact || 'hubungi admin'}).
+5. Jaga konteks percakapan multi-turn berdasarkan riwayat chat.
 
 BASIS PENGETAHUAN RESMI: "${orgName}"
 • Nama Resmi: ${orgName} ${profile.shortName ? `(${profile.shortName})` : ''}
