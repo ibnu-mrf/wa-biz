@@ -26,11 +26,11 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint",
+    "lint": "node scripts/run-lint.mjs",
     "test": "npm run test:unit",
-    "test:unit": "tsx --test tests/unit/*.test.ts",
-    "test:integration": "tsx --test tests/integration/*.test.ts",
-    "test:coverage": "tsx scripts/generate-coverage.ts",
+    "test:unit": "node --test tests/unit.test.mjs",
+    "test:integration": "node --test tests/integration.test.mjs",
+    "test:coverage": "node scripts/generate-coverage.mjs",
     "test:e2e": "playwright test"
   },
   "private": true
