@@ -64,3 +64,6 @@ playwright/.cache/
 scratch/
 *.apk
 dist/*.apk
+
+# SonarQube Scanner
+.scannerwork/

@@ -1131,6 +1131,90 @@ export function generateGeneralAiResponse(
     }
   }
 
+/**
+ * Evaluator matematika deterministik dan aman tanpa menggunakan eval atau new Function.
+ * Mencegah issue keamanan SonarQube S1523 (Dynamic Code Execution).
+ */
+function safeEvaluateMath(expression: string): number | null {
+  if (!/^[\d\s+\-*/().]+$/.test(expression.trim())) return null;
+  const matchResult = expression.match(/\d+(?:\.\d+)?|[+\-*/()]/g);
+  if (!matchResult || matchResult.length === 0) return null;
+  const tokens: string[] = matchResult;
+
+  let pos = 0;
+
+  function peek(): string | null {
+    return pos < tokens.length ? tokens[pos] : null;
+  }
+
+  function consume(expected?: string): string {
+    const token = tokens[pos++];
+    if (expected !== undefined && token !== expected) {
+      throw new Error(`Expected '${expected}', got '${token}'`);
+    }
+    return token;
+  }
+
+  function parseExpr(): number {
+    let result = parseTerm();
+    while (peek() === '+' || peek() === '-') {
+      const op = consume();
+      const nextTerm = parseTerm();
+      if (op === '+') result += nextTerm;
+      else result -= nextTerm;
+    }
+    return result;
+  }
+
+  function parseTerm(): number {
+    let result = parseFactor();
+    while (peek() === '*' || peek() === '/') {
+      const op = consume();
+      const nextFactor = parseFactor();
+      if (op === '*') {
+        result *= nextFactor;
+      } else {
+        if (nextFactor === 0) throw new Error('Division by zero');
+        result /= nextFactor;
+      }
+    }
+    return result;
+  }
+
+  function parseFactor(): number {
+    const next = peek();
+    if (next === '+') {
+      consume();
+      return parseFactor();
+    }
+    if (next === '-') {
+      consume();
+      return -parseFactor();
+    }
+    if (next === '(') {
+      consume('(');
+      const inner = parseExpr();
+      consume(')');
+      return inner;
+    }
+    if (next !== null && /^\d+(?:\.\d+)?$/.test(next)) {
+      return parseFloat(consume());
+    }
+    throw new Error(`Unexpected token '${next}'`);
+  }
+
+  try {
+    const result = parseExpr();
+    if (pos !== tokens.length) return null;
+    if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
+      return result;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
   const isMathQuery =
     p.includes('hitung') ||
     p.includes('kalkulasi') ||
@@ -1162,9 +1246,8 @@ export function generateGeneralAiResponse(
 
     if (/^[\d\s\+\-\*\/\(\)\.]+$/.test(cleanedExpr)) {
       try {
-        const fn = new Function(`'use strict'; return (${cleanedExpr});`);
-        const result = fn();
-        if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
+        const result = safeEvaluateMath(cleanedExpr);
+        if (result !== null && typeof result === 'number' && !isNaN(result) && isFinite(result)) {
           const formatted = Number.isInteger(result)
             ? new Intl.NumberFormat('id-ID').format(result)
             : result.toFixed(2);

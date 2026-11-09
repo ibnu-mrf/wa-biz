@@ -168,7 +168,117 @@ class MockSupabaseDatabase {
         let updateData: any = null;
         let insertData: any = null;
 
-        const queryObj: any = {
+        async function executeQuery() {
+          if (table === 'messages') {
+            if (insertData) {
+              const row: MockMessageRow = {
+                id: insertData.id || `msg_uuid_${++db.autoId}`,
+                organization_id: insertData.organization_id,
+                conversation_id: insertData.conversation_id,
+                sender_type: insertData.sender_type,
+                body: insertData.body,
+                sent_at: insertData.sent_at || new Date().toISOString(),
+                provider_type: insertData.provider_type || 'baileys',
+                provider_message_id: insertData.provider_message_id || null,
+                delivery_status: insertData.delivery_status || 'delivered',
+                reply_to_message_id: insertData.reply_to_message_id || null,
+                ai_status: insertData.ai_status || 'completed',
+                ai_locked_at: insertData.ai_locked_at || null,
+                ai_lease_token: insertData.ai_lease_token || null,
+                ai_dispatch_started_at: insertData.ai_dispatch_started_at || null,
+                created_at: new Date().toISOString(),
+              };
+              db.messages.push(row);
+              return { data: [row], error: null };
+            }
+
+            if (updateData) {
+              let count = 0;
+              const updatedRows: any[] = [];
+              for (const row of db.messages) {
+                if (filters.every((f) => f(row))) {
+                  Object.assign(row, updateData);
+                  updatedRows.push(row);
+                  count++;
+                }
+              }
+              return { data: updatedRows, count, error: null };
+            }
+
+            let rows = db.messages.filter((r) => filters.every((f) => f(r)));
+            if (orderField) {
+              rows.sort((a: any, b: any) => {
+                if (a[orderField!] < b[orderField!]) return isAsc ? -1 : 1;
+                if (a[orderField!] > b[orderField!]) return isAsc ? 1 : -1;
+                return 0;
+              });
+            }
+            if (limitVal) {
+              rows = rows.slice(0, limitVal);
+            }
+            return { data: rows, error: null };
+          }
+
+          if (table === 'contacts') {
+            if (insertData) {
+              const contact = {
+                id: `contact_${++db.autoId}`,
+                organization_id: insertData.organization_id,
+                name: insertData.name,
+                phone: insertData.phone,
+              };
+              db.contacts.push(contact);
+              return { data: [contact], error: null };
+            }
+            const rows = db.contacts.filter((c) => filters.every((f) => f(c)));
+            return { data: rows, error: null };
+          }
+
+          if (table === 'conversations') {
+            if (insertData) {
+              const conv = {
+                id: `conv_${++db.autoId}`,
+                organization_id: insertData.organization_id,
+                contact_id: insertData.contact_id,
+                status: insertData.status || 'open',
+                last_message_at: insertData.last_message_at || new Date().toISOString(),
+              };
+              db.conversations.push(conv);
+              return { data: [conv], error: null };
+            }
+            if (updateData) {
+              for (const conv of db.conversations) {
+                if (filters.every((f) => f(conv))) {
+                  Object.assign(conv, updateData);
+                }
+              }
+              return { data: null, error: null };
+            }
+            const rows = db.conversations.filter((c) => filters.every((f) => f(c)));
+            return { data: rows, error: null };
+          }
+
+          if (table === 'organizations') {
+            const rows = db.organizations.filter((o) => filters.every((f) => f(o)));
+            return { data: rows, error: null };
+          }
+
+          return { data: [], error: null };
+        }
+
+        // Gunakan Promise standar daripada menambahkan properti 'then' secara manual
+        // untuk mematuhi aturan SonarQube S2814/S6582 (Do not add 'then' to an object).
+        const standardPromise = new Promise<{ data: any; error: any }>((resolve, reject) => {
+          queueMicrotask(async () => {
+            try {
+              resolve(await executeQuery());
+            } catch (err) {
+              reject(err);
+            }
+          });
+        });
+
+        const queryObj: any = Object.assign(standardPromise, {
           select(fields = '*') {
             return queryObj;
           },
@@ -198,120 +308,21 @@ class MockSupabaseDatabase {
             return queryObj;
           },
           async single() {
-            const res = await queryObj.execute();
+            const res = await executeQuery();
             if (res.data && res.data.length > 0) {
               return { data: res.data[0], error: null };
             }
             return { data: null, error: { message: 'Row not found', code: 'PGRST116' } };
           },
           async maybeSingle() {
-            const res = await queryObj.execute();
+            const res = await executeQuery();
             if (res.data && res.data.length > 0) {
               return { data: res.data[0], error: null };
             }
             return { data: null, error: null };
           },
-          async execute() {
-            if (table === 'messages') {
-              if (insertData) {
-                const row: MockMessageRow = {
-                  id: insertData.id || `msg_uuid_${++db.autoId}`,
-                  organization_id: insertData.organization_id,
-                  conversation_id: insertData.conversation_id,
-                  sender_type: insertData.sender_type,
-                  body: insertData.body,
-                  sent_at: insertData.sent_at || new Date().toISOString(),
-                  provider_type: insertData.provider_type || 'baileys',
-                  provider_message_id: insertData.provider_message_id || null,
-                  delivery_status: insertData.delivery_status || 'delivered',
-                  reply_to_message_id: insertData.reply_to_message_id || null,
-                  ai_status: insertData.ai_status || 'completed',
-                  ai_locked_at: insertData.ai_locked_at || null,
-                  ai_lease_token: insertData.ai_lease_token || null,
-                  ai_dispatch_started_at: insertData.ai_dispatch_started_at || null,
-                  created_at: new Date().toISOString(),
-                };
-                db.messages.push(row);
-                return { data: [row], error: null };
-              }
-
-              if (updateData) {
-                let count = 0;
-                const updatedRows: any[] = [];
-                for (const row of db.messages) {
-                  if (filters.every((f) => f(row))) {
-                    Object.assign(row, updateData);
-                    updatedRows.push(row);
-                    count++;
-                  }
-                }
-                return { data: updatedRows, count, error: null };
-              }
-
-              let rows = db.messages.filter((r) => filters.every((f) => f(r)));
-              if (orderField) {
-                rows.sort((a: any, b: any) => {
-                  if (a[orderField!] < b[orderField!]) return isAsc ? -1 : 1;
-                  if (a[orderField!] > b[orderField!]) return isAsc ? 1 : -1;
-                  return 0;
-                });
-              }
-              if (limitVal) {
-                rows = rows.slice(0, limitVal);
-              }
-              return { data: rows, error: null };
-            }
-
-            if (table === 'contacts') {
-              if (insertData) {
-                const contact = {
-                  id: `contact_${++db.autoId}`,
-                  organization_id: insertData.organization_id,
-                  name: insertData.name,
-                  phone: insertData.phone,
-                };
-                db.contacts.push(contact);
-                return { data: [contact], error: null };
-              }
-              const rows = db.contacts.filter((c) => filters.every((f) => f(c)));
-              return { data: rows, error: null };
-            }
-
-            if (table === 'conversations') {
-              if (insertData) {
-                const conv = {
-                  id: `conv_${++db.autoId}`,
-                  organization_id: insertData.organization_id,
-                  contact_id: insertData.contact_id,
-                  status: insertData.status || 'open',
-                  last_message_at: insertData.last_message_at || new Date().toISOString(),
-                };
-                db.conversations.push(conv);
-                return { data: [conv], error: null };
-              }
-              if (updateData) {
-                for (const conv of db.conversations) {
-                  if (filters.every((f) => f(conv))) {
-                    Object.assign(conv, updateData);
-                  }
-                }
-                return { data: null, error: null };
-              }
-              const rows = db.conversations.filter((c) => filters.every((f) => f(c)));
-              return { data: rows, error: null };
-            }
-
-            if (table === 'organizations') {
-              const rows = db.organizations.filter((o) => filters.every((f) => f(o)));
-              return { data: rows, error: null };
-            }
-
-            return { data: [], error: null };
-          },
-          then(resolve: any, reject: any) {
-            return queryObj.execute().then(resolve, reject);
-          },
-        };
+          execute: executeQuery,
+        });
 
         return queryObj;
       },
