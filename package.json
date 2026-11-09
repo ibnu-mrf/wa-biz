@@ -26,6 +26,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
+    "test": "playwright test tests/notifications-unit.spec.ts",
+    "test:unit": "playwright test tests/notifications-unit.spec.ts",
     "test:e2e": "playwright test"
   },
   "private": true
