@@ -12,17 +12,15 @@ import {
   Modal,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { COLORS, AppIcon, SHADOWS, BACKGROUNDS, useTheme, ThemePalette } from '../theme';
+import { COLORS, AppIcon, useTheme, ThemePalette } from '../theme';
 import { normalizePhoneNumber } from './ContactsView';
 import {
-  notifySystemEvent,
   notifyOrgProfileUpdated,
   notifyConfigUpdated,
 } from '../lib/notifications';
 import { formatErrorUserMessage } from '../lib/errorHandler';
 import {
   WhatsAppWorkerStatus,
-  checkWorkerHealth,
   getWhatsAppStatus,
   getWhatsAppQr,
   reconnectWhatsApp,

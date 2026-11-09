@@ -101,20 +101,21 @@ export function classifyAppError(
   // 3. WORKER GATEWAY OFFLINE VS NETWORK ERROR UMUM
   const isWorkerTarget = Boolean(
     context?.isWorker ||
-    lower.includes('worker') ||
+    (lower.includes('worker') && !lower.includes('networkerror')) ||
     lower.includes('4000') ||
     lower.includes('gateway')
   );
 
   if (
     context?.isWorker ||
-    lower.includes('worker') ||
+    (lower.includes('worker') && !lower.includes('networkerror')) ||
     lower.includes('4000') ||
     lower.includes('gateway') ||
     lower.includes('failed to fetch') ||
     lower.includes('err_connection_refused') ||
     lower.includes('econnrefused') ||
     lower.includes('network error') ||
+    lower.includes('networkerror') ||
     lower.includes('networkrequestfailed') ||
     lower.includes('tidak dapat dihubungi') ||
     lower.includes('gagal terhubung') ||
@@ -150,7 +151,8 @@ export function classifyAppError(
     lower.includes('session not found') ||
     lower.includes('refresh_token_not_found') ||
     (lower.includes('auth') && lower.includes('expired')) ||
-    lower.includes('sesi login')
+    lower.includes('sesi login') ||
+    lower.includes('credential')
   ) {
     return {
       category: 'auth_expired',

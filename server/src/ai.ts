@@ -1410,28 +1410,77 @@ function safeEvaluateMath(expression: string): number | null {
     p.includes('hitung') ||
     p.includes('kalkulasi') ||
     p.includes('berapa hasil') ||
-    p.includes('akar dari') ||
+    p.includes('akar') ||
+    p.includes('sqrt') ||
     /^[\d\s\+\-\*\/\(\)\.x×÷\^:=]+$/.test(p.trim());
 
   if (isMathQuery) {
-    const sqrtMatch = p.match(/(?:akar(?: kuadrat)?(?: dari)?|sqrt)\s*(\d+(?:[.,]\d+)?)/i);
-    if (sqrtMatch) {
-      const val = Number.parseFloat(sqrtMatch[1].replace(',', '.'));
-      if (!Number.isNaN(val) && val >= 0) {
-        const res = Math.sqrt(val);
-        return {
-          text: `${prefixGreeting}Akar kuadrat dari **${val}** adalah **${res}**.\n\nApakah ada perhitungan lain yang ingin Anda selesaikan?`,
-          detectedIntent: 'math_calculation',
-        };
+    const sqrtVal = (() => {
+      const prefixes = ['akar kuadrat dari', 'akar kuadrat', 'akar dari', 'akar', 'sqrt'];
+      for (const prefix of prefixes) {
+        const idx = p.indexOf(prefix);
+        if (idx !== -1) {
+          const rest = p.slice(idx + prefix.length).trimStart();
+          let endDigits = 0;
+          while (endDigits < rest.length) {
+            const ch = rest[endDigits];
+            if ((ch >= '0' && ch <= '9') || ch === '.' || ch === ',') {
+              endDigits++;
+            } else {
+              break;
+            }
+          }
+          if (endDigits > 0) {
+            const numStr = rest.slice(0, endDigits).replace(',', '.');
+            const val = Number.parseFloat(numStr);
+            if (!Number.isNaN(val) && val >= 0) return val;
+          }
+        }
       }
+      return null;
+    })();
+
+    if (sqrtVal !== null) {
+      const res = Math.sqrt(sqrtVal);
+      return {
+        text: `${prefixGreeting}Akar kuadrat dari **${sqrtVal}** adalah **${res}**.\n\nApakah ada perhitungan lain yang ingin Anda selesaikan?`,
+        detectedIntent: 'math_calculation',
+      };
     }
 
-    const cleanedExpr = p
-      .replace(/^(?:tolong\s+)?(?:hitung(?:kan)?|kalkulasi|berapa(?:kah)?\s*(?:hasil\s*(?:dari)?)?)\s*/i, '')
-      .replace(/sama dengan|\?|=/g, '')
-      .replace(/[xX×]/g, '*')
-      .replace(/[÷:]/g, '/')
-      .trim();
+    let cleanedExpr = p.trim();
+    const mathCmds = [
+      'tolong hitungkan',
+      'tolong hitung',
+      'hitungkan',
+      'hitung',
+      'kalkulasi',
+      'berapakah hasil dari',
+      'berapa hasil dari',
+      'berapakah hasil',
+      'berapa hasil',
+      'berapakah',
+      'berapa',
+    ];
+    for (const cmd of mathCmds) {
+      if (cleanedExpr.startsWith(cmd)) {
+        cleanedExpr = cleanedExpr.slice(cmd.length).trimStart();
+        break;
+      }
+    }
+    let sanitizedExpr = '';
+    for (let i = 0; i < cleanedExpr.length; i++) {
+      const ch = cleanedExpr[i];
+      if (ch === '?' || ch === '=') continue;
+      if (ch === 'x' || ch === 'X' || ch === '×') {
+        sanitizedExpr += '*';
+      } else if (ch === '÷' || ch === ':') {
+        sanitizedExpr += '/';
+      } else {
+        sanitizedExpr += ch;
+      }
+    }
+    cleanedExpr = sanitizedExpr.replaceAll('sama dengan', '').trim();
 
     if (/^[\d\s\+\-\*\/\(\)\.]+$/.test(cleanedExpr)) {
       try {

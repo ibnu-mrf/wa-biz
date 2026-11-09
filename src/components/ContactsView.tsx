@@ -11,7 +11,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { COLORS, AppIcon, SHADOWS, BACKGROUNDS, useTheme, ThemePalette } from '../theme';
+import { COLORS, AppIcon, useTheme, ThemePalette } from '../theme';
 import {
   notifyContactCreated,
   notifyContactUpdated,

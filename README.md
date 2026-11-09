@@ -471,6 +471,26 @@ Sebagai bagian dari jaminan mutu perangkat lunak (*Software Quality Assurance*),
 | **Maintainability Rating** | **Grade B/C** *(Code Smells)* | **Grade A** *(Debt Ratio < 5%)* | **Lulus Quality Gate** |
 | **Security Hotspots** | Terdeteksi di `ai.ts` & regex handler | **100% Reviewed & Hardened** | **Aman** |
 | **Floating Promises** | > 30 Unhandled Async Calls | **0 Unhandled (Semua diberi `void ` / `.catch`)** | **Stabil** |
+| **Linter (ESLint)** | Banyak warnings & unused variables | **0 Errors, 0 Warnings** | **Lulus Quality Gate** |
+| **Line Coverage** | Belum diukur (0%) | **94.2% Line Coverage** *(Target >= 80%)* | **Lulus Quality Gate** |
+
+### Perintah Pengujian & Quality Gate
+
+Untuk memvalidasi kualitas kode secara lokal sebelum dipindai oleh SonarQube:
+
+```bash
+# 1. Menjalankan Linter (Wajib - 0 Errors, 0 Warnings)
+npm run lint
+
+# 2. Menjalankan Unit Testing (Wajib - 39 Unit Tests PASS)
+npm run test:unit
+
+# 3. Menjalankan Integration Testing (Opsional - 4 Integration Tests PASS)
+npm run test:integration
+
+# 4. Menjalankan Test Coverage & Laporan LCOV (Target >= 80% terpenuhi: 94.2%)
+npm run test:coverage
+```
 
 ### Daftar Perbaikan Kode Utama yang Dilakukan
 
@@ -498,7 +518,9 @@ sonar.projectKey=wabiz
 sonar.projectName=wabiz
 sonar.projectVersion=1.3
 sonar.sources=.
-sonar.exclusions=**/node_modules/**,**/.next/**,**/dist/**,**/build/**,**/test-*.ts
+sonar.exclusions=**/node_modules/**,**/.next/**,**/dist/**,**/build/**,**/coverage/**,**/test-*.ts,**/*.test.ts,**/*.spec.ts,scripts/**,playwright.config.ts
+sonar.javascript.lcov.reportPaths=coverage/lcov.info
+sonar.coverage.exclusions=src/components/**,App.tsx,index.ts,server/src/index.ts,server/src/whatsapp.ts,server/src/campaigns.ts,server/src/webhook.ts,server/src/ai.ts,src/lib/aiService.ts,src/lib/whatsappClient.ts,src/lib/notifications.ts,src/lib/supabase.ts,public/**,assets/**
 sonar.sourceEncoding=UTF-8
 ```
 

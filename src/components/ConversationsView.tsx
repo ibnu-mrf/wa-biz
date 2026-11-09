@@ -10,10 +10,9 @@ import {
   ActivityIndicator,
   Modal,
   KeyboardAvoidingView,
-  Keyboard,
 } from 'react-native';
 import { supabase } from '../lib/supabase';
-import { COLORS, AppIcon, SHADOWS, BACKGROUNDS, useTheme, ThemePalette } from '../theme';
+import { COLORS, AppIcon, SHADOWS, useTheme, ThemePalette } from '../theme';
 import { Contact } from './ContactsView';
 import {
   sendWhatsAppMessage,
@@ -313,7 +312,7 @@ export function ConversationsView({
   onConversationDeleted,
   onConversationUpdated,
 }: ConversationsViewProps) {
-  const { isDark, colors } = useTheme();
+  const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [internalConversations, setInternalConversations] = useState<Conversation[]>([]);
   const conversations = externalConversations ?? internalConversations;
@@ -634,7 +633,7 @@ export function ConversationsView({
         clearTimeout(timer);
       };
     }
-  }, [isDesktop, conversations, selectedId, setSelectedId]);
+  }, [isDesktop, conversations, selectedId, setSelectedId, hasUserClosedDetail]);
 
   // Sinkronisasi Real-time (Supabase Realtime) dan Polling Cadangan (4 detik)
   useEffect(() => {
@@ -686,7 +685,7 @@ export function ConversationsView({
       clearInterval(pollInterval);
       void supabase.removeChannel(channel);
     };
-  }, [effectiveOrgId, selectedId, fetchConversations, fetchMessages]);
+  }, [effectiveOrgId, selectedId, fetchConversations, fetchMessages, onConversationUpdated]);
 
   // Hitung jumlah data per kategori
   // 'open': percakapan aktif/sedang ditangani
@@ -779,7 +778,7 @@ export function ConversationsView({
           ) {
             console.warn('[Delete Conversation] Worker returned error:', clientRes.error);
           }
-        } catch (workerErr) {
+        } catch {
           // Worker offline / unreachable, fallback ke Supabase client langsung
         }
 
@@ -1023,6 +1022,8 @@ export function ConversationsView({
       currentUserFullName,
       selectedConversation,
       setConversations,
+      currentUserId,
+      onConversationUpdated,
     ]
   );
 

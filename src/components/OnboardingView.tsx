@@ -24,7 +24,7 @@ export interface OnboardingViewProps {
 }
 
 export function OnboardingView({ onOrganizationCreated, onLogout }: OnboardingViewProps) {
-  const { isDark, colors } = useTheme();
+  const { colors } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const { width } = useWindowDimensions();
   const isDesktop = width >= 768;
