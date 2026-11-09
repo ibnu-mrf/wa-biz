@@ -495,7 +495,7 @@ export function SettingsView({
         text: 'Permintaan koneksi ulang dikirim. Sedang menyiapkan koneksi...',
       });
       setTimeout(() => {
-        refreshWhatsAppWorkerState(false);
+        void refreshWhatsAppWorkerState(false);
       }, 2000);
     } else {
       setWaActionMessage({
@@ -593,7 +593,7 @@ export function SettingsView({
       }
     };
 
-    checkRole();
+    void checkRole();
     return () => {
       ignore = true;
     };
@@ -670,7 +670,7 @@ export function SettingsView({
       }
     };
 
-    loadData();
+    void loadData();
 
     return () => {
       ignore = true;
@@ -729,7 +729,7 @@ export function SettingsView({
 
     // 4. Validasi Format Email
     if (draft.officialEmail.trim()) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
       if (!emailRegex.test(draft.officialEmail.trim())) {
         setFeedback({
           type: 'error',

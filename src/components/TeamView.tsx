@@ -264,7 +264,7 @@ export function TeamView({
       }
     };
 
-    checkRole();
+    void checkRole();
     return () => {
       ignore = true;
     };
@@ -375,7 +375,7 @@ export function TeamView({
       }
     };
 
-    loadData();
+    void loadData();
 
     return () => {
       ignore = true;
@@ -509,7 +509,7 @@ export function TeamView({
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
     if (!emailRegex.test(emailTrimmed)) {
       setFormError('Format alamat email tidak valid. Contoh: nama@domain.com');
       return;
@@ -834,7 +834,7 @@ export function TeamView({
 
       // Sinkronisasi data terbaru secara silent jika online
       if (!targetMember.isDemo && effectiveOrgId) {
-        fetchTeamMembers(effectiveOrgId);
+        void fetchTeamMembers(effectiveOrgId);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);

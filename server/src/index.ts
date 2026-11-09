@@ -42,6 +42,7 @@ import {
 } from './webhook';
 
 const app = express();
+app.disable('x-powered-by');
 
 // ==========================================
 // 1. MIDDLEWARE CORS LOKAL (DEVELOPMENT ONLY)

@@ -63,9 +63,9 @@ self.addEventListener('fetch', (event) => {
         // Cache respons sukses dari same-origin
         if (networkResponse && networkResponse.status === 200 && networkResponse.type === 'basic') {
           const responseToCache = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(req, responseToCache);
-          });
+          void caches.open(CACHE_NAME).then((cache) => {
+            void cache.put(req, responseToCache);
+          }).catch(() => {});
         }
         return networkResponse;
       })

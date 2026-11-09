@@ -326,7 +326,7 @@ export class WhatsAppService {
             this.cleanupSocket();
             setTimeout(() => {
               if (!this.isExplicitlyClosed) {
-                this.start(false);
+                void this.start(false);
               }
             }, 500);
             return;
@@ -517,7 +517,7 @@ export class WhatsAppService {
             console.log('[Diagnostic Stage 2: Dilewati] Bot dinonaktifkan atau teks balasan kosong.');
             try {
               await sock.sendPresenceUpdate('paused', remoteJid);
-            } catch {}
+            } catch { }
             continue;
           }
 
@@ -534,7 +534,7 @@ export class WhatsAppService {
 
           try {
             await sock.sendPresenceUpdate('paused', remoteJid);
-          } catch {}
+          } catch { }
 
           // TAHAP 5: PENGIRIMAN BERHASIL / GAGAL
           try {
@@ -575,7 +575,7 @@ export class WhatsAppService {
           if (msgId && status !== undefined && status !== null) {
             // Nilai status Baileys: 3 = DELIVERY_ACK (sampai di perangkat penerima), 4 = READ (dibaca)
             if (status === 3 || status === 4 || String(status) === 'DELIVERY_ACK' || String(status) === 'READ') {
-              campaignScheduler.handleBaileysReceipt(msgId, 'delivered').catch(() => {});
+              campaignScheduler.handleBaileysReceipt(msgId, 'delivered').catch(() => { });
             }
           }
         }
@@ -614,7 +614,7 @@ export class WhatsAppService {
         return;
       }
       this.cleanupSocket();
-      this.start(false);
+      void this.start(false);
     }, delay);
   }
 

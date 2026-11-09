@@ -626,7 +626,7 @@ function DashboardView({
         </View>
 
         {/* Kolom Kanan: Checklist Kesiapan Workspace */}
-        <View style={[styles.panelCard, { flex: isDesktop ? 1 : 1 }]}>
+        <View style={[styles.panelCard, { flex: isDesktop ? 1 : undefined }]}>
           <View style={styles.panelCardHeader}>
             <Text style={styles.panelCardTitle}>Kesiapan Workspace</Text>
             <Text style={styles.panelProgressText}>2 / 5 Langkah (40%)</Text>
@@ -890,12 +890,12 @@ function AppContent() {
 
   useEffect(() => {
     if (!currentOrg?.id || !user?.id) return;
-    refreshUnreadNotifications();
+    void refreshUnreadNotifications();
     const unsubscribeRealtime = subscribeToNotifications(currentOrg.id, user.id, () => {
-      refreshUnreadNotifications();
+      void refreshUnreadNotifications();
     });
     const unsubscribeLocal = addNotificationChangeListener(() => {
-      refreshUnreadNotifications();
+      void refreshUnreadNotifications();
     });
     return () => {
       unsubscribeRealtime();
@@ -930,7 +930,7 @@ function AppContent() {
         default:
           break;
       }
-      refreshUnreadNotifications();
+      void refreshUnreadNotifications();
     },
     [refreshUnreadNotifications]
   );
@@ -1092,7 +1092,7 @@ function AppContent() {
   // Sinkronisasi metrik dashboard: Polling berkala + Supabase Realtime seketika
   useEffect(() => {
     if (!currentOrg?.id) return;
-    fetchDashboardMetrics(currentOrg.id);
+    void fetchDashboardMetrics(currentOrg.id);
 
     // Supabase Realtime Channel untuk sinkronisasi metrik seketika (messages, conversations, contacts)
     const channel = supabase
@@ -1106,7 +1106,7 @@ function AppContent() {
           filter: `organization_id=eq.${currentOrg.id}`,
         },
         () => {
-          fetchDashboardMetrics(currentOrg.id);
+          void fetchDashboardMetrics(currentOrg.id);
         }
       )
       .on(
@@ -1118,7 +1118,7 @@ function AppContent() {
           filter: `organization_id=eq.${currentOrg.id}`,
         },
         () => {
-          fetchDashboardMetrics(currentOrg.id);
+          void fetchDashboardMetrics(currentOrg.id);
         }
       )
       .on(
@@ -1130,18 +1130,18 @@ function AppContent() {
           filter: `organization_id=eq.${currentOrg.id}`,
         },
         () => {
-          fetchDashboardMetrics(currentOrg.id);
+          void fetchDashboardMetrics(currentOrg.id);
         }
       )
       .subscribe();
 
     const interval = setInterval(() => {
-      fetchDashboardMetrics(currentOrg.id);
+      void fetchDashboardMetrics(currentOrg.id);
     }, 5000);
 
     return () => {
       clearInterval(interval);
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, [currentOrg?.id, fetchDashboardMetrics]);
 
@@ -1162,7 +1162,7 @@ function AppContent() {
 
       // 2. Refresh metrik secara instan dari database untuk memastikan akurasi data kanonikal
       if (currentOrg?.id) {
-        fetchDashboardMetrics(currentOrg.id);
+        void fetchDashboardMetrics(currentOrg.id);
       }
     },
     [currentOrg?.id, fetchDashboardMetrics]
@@ -1171,7 +1171,7 @@ function AppContent() {
   // Handler sinkronisasi instan saat status percakapan atau pesan diperbarui
   const handleConversationUpdated = useCallback(() => {
     if (currentOrg?.id) {
-      fetchDashboardMetrics(currentOrg.id);
+      void fetchDashboardMetrics(currentOrg.id);
     }
   }, [currentOrg?.id, fetchDashboardMetrics]);
 
@@ -1304,7 +1304,7 @@ function AppContent() {
         setIsAuthLoading(false);
         previousUserIdRef.current = currentUser?.id ?? null;
         if (currentUser) {
-          checkUserOrganization(currentUser.id);
+          void checkUserOrganization(currentUser.id);
         } else {
           resetWorkspaceState();
         }
@@ -1330,7 +1330,7 @@ function AppContent() {
       previousUserIdRef.current = currentUser?.id ?? null;
 
       if (currentUser) {
-        checkUserOrganization(currentUser.id);
+        void checkUserOrganization(currentUser.id);
       }
     });
 
@@ -1871,7 +1871,7 @@ function AppContent() {
                   institutionType={orgProfile.institutionType}
                   onCampaignUpdated={() => {
                     if (currentOrg?.id) {
-                      fetchDashboardMetrics(currentOrg.id);
+                      void fetchDashboardMetrics(currentOrg.id);
                     }
                   }}
                 />
@@ -2181,7 +2181,7 @@ function AppContent() {
         visible={isNotificationsOpen}
         onClose={() => {
           setIsNotificationsOpen(false);
-          refreshUnreadNotifications();
+          void refreshUnreadNotifications();
         }}
         organizationId={currentOrg?.id}
         userId={user?.id}

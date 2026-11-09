@@ -148,7 +148,7 @@ function validateAndParseTargetUrl(rawUrl: string): VerifiedTargetDb {
     );
   }
 
-  const port = parseInt(parsed.port || '5432', 10);
+  const port = Number.parseInt(parsed.port || '5432', 10);
   return {
     connectionString: rawUrl,
     databaseName: dbName,

@@ -593,7 +593,7 @@ export function ConversationsView({
 
     const timer = setTimeout(() => {
       if (!ignore) {
-        fetchConversations(effectiveOrgId, false);
+        void fetchConversations(effectiveOrgId, false);
       }
     }, 0);
 
@@ -610,7 +610,7 @@ export function ConversationsView({
 
     const timer = setTimeout(() => {
       if (!ignore) {
-        fetchMessages(selectedId, false);
+        void fetchMessages(selectedId, false);
       }
     }, 0);
 
@@ -652,9 +652,9 @@ export function ConversationsView({
           filter: `organization_id=eq.${effectiveOrgId}`,
         },
         () => {
-          fetchConversations(effectiveOrgId, true);
+          void fetchConversations(effectiveOrgId, true);
           if (selectedId) {
-            fetchMessages(selectedId, true);
+            void fetchMessages(selectedId, true);
           }
           onConversationUpdated?.();
         }
@@ -668,7 +668,7 @@ export function ConversationsView({
           filter: `organization_id=eq.${effectiveOrgId}`,
         },
         () => {
-          fetchConversations(effectiveOrgId, true);
+          void fetchConversations(effectiveOrgId, true);
           onConversationUpdated?.();
         }
       )
@@ -676,15 +676,15 @@ export function ConversationsView({
 
     // 2. Polling cadangan setiap 4 detik untuk jaminan sinkronisasi jika websocket terbatas
     const pollInterval = setInterval(() => {
-      fetchConversations(effectiveOrgId, true);
+      void fetchConversations(effectiveOrgId, true);
       if (selectedId) {
-        fetchMessages(selectedId, true);
+        void fetchMessages(selectedId, true);
       }
     }, 4000);
 
     return () => {
       clearInterval(pollInterval);
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   }, [effectiveOrgId, selectedId, fetchConversations, fetchMessages]);
 
@@ -825,7 +825,7 @@ export function ConversationsView({
 
       // Sinkronkan daftar terbaru jika terhubung ke Supabase
       if (!targetConv.isDemo && effectiveOrgId) {
-        fetchConversations(effectiveOrgId, true);
+        void fetchConversations(effectiveOrgId, true);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1948,13 +1948,13 @@ export function ConversationsView({
                 if (Platform.OS === 'web' && e.nativeEvent?.key === 'Enter' && !e.nativeEvent?.shiftKey) {
                   e.preventDefault();
                   if (inputText.trim().length > 0 && !isSending) {
-                    handleSendMessage();
+                    void handleSendMessage();
                   }
                 }
               }}
               onSubmitEditing={() => {
                 if (inputText.trim().length > 0 && !isSending) {
-                  handleSendMessage();
+                  void handleSendMessage();
                 }
               }}
             />

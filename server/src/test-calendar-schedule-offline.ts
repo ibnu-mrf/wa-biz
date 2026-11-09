@@ -62,9 +62,9 @@ function formatScheduleDateOnly(dateStr: string): string {
   try {
     const parts = dateStr.split('-');
     if (parts.length !== 3) return dateStr;
-    const yyyy = parseInt(parts[0], 10);
-    const mm = parseInt(parts[1], 10) - 1;
-    const dd = parseInt(parts[2], 10);
+    const yyyy = Number.parseInt(parts[0], 10);
+    const mm = Number.parseInt(parts[1], 10) - 1;
+    const dd = Number.parseInt(parts[2], 10);
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const monthNames = [
       'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -84,9 +84,9 @@ function formatScheduleDisplay(dateStr: string, timeStr: string): string {
   try {
     const parts = dateStr.split('-');
     if (parts.length !== 3) return `${dateStr} ${timeStr} WIB`;
-    const yyyy = parseInt(parts[0], 10);
-    const mm = parseInt(parts[1], 10) - 1;
-    const dd = parseInt(parts[2], 10);
+    const yyyy = Number.parseInt(parts[0], 10);
+    const mm = Number.parseInt(parts[1], 10) - 1;
+    const dd = Number.parseInt(parts[2], 10);
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const monthNames = [
       'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -104,7 +104,7 @@ function formatScheduleDisplay(dateStr: string, timeStr: string): string {
 function parseWibDateTime(isoStr: string): { yyyy: string; mm: string; dd: string; hh: string; min: string } | null {
   if (!isoStr) return null;
   const d = new Date(isoStr);
-  if (isNaN(d.getTime())) return null;
+  if (Number.isNaN(d.getTime())) return null;
   try {
     const formatter = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Jakarta',

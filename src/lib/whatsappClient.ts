@@ -80,7 +80,10 @@ export function getWorkerBaseUrl(): string {
     return '';
   }
 
-  const trimmed = envUrl.trim().replace(/\/+$/, '');
+  let trimmed = envUrl.trim();
+  while (trimmed.endsWith('/')) {
+    trimmed = trimmed.slice(0, -1);
+  }
 
   // Jika bundle dijalankan di browser web non-localhost atau HTTPS, URL loopback tidak valid
   if (typeof window !== 'undefined' && window.location) {

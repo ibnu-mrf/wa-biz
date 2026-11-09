@@ -87,9 +87,9 @@ export function formatScheduleDisplay(dateStr: string, timeStr: string): string 
   try {
     const parts = dateStr.split('-');
     if (parts.length !== 3) return `${dateStr} ${timeStr} WIB`;
-    const yyyy = parseInt(parts[0], 10);
-    const mm = parseInt(parts[1], 10) - 1;
-    const dd = parseInt(parts[2], 10);
+    const yyyy = Number.parseInt(parts[0], 10);
+    const mm = Number.parseInt(parts[1], 10) - 1;
+    const dd = Number.parseInt(parts[2], 10);
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const monthNames = [
       'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -110,9 +110,9 @@ export function formatScheduleDateOnly(dateStr: string): string {
   try {
     const parts = dateStr.split('-');
     if (parts.length !== 3) return dateStr;
-    const yyyy = parseInt(parts[0], 10);
-    const mm = parseInt(parts[1], 10) - 1;
-    const dd = parseInt(parts[2], 10);
+    const yyyy = Number.parseInt(parts[0], 10);
+    const mm = Number.parseInt(parts[1], 10) - 1;
+    const dd = Number.parseInt(parts[2], 10);
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     const monthNames = [
       'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
@@ -158,7 +158,7 @@ export function calculateDialMinute(deg: number): string {
 export function parseWibDateTime(isoStr: string): { yyyy: string; mm: string; dd: string; hh: string; min: string } | null {
   if (!isoStr) return null;
   const d = new Date(isoStr);
-  if (isNaN(d.getTime())) return null;
+  if (Number.isNaN(d.getTime())) return null;
   try {
     const formatter = new Intl.DateTimeFormat('en-CA', {
       timeZone: 'Asia/Jakarta',
@@ -635,7 +635,7 @@ export function CampaignsView({
   useEffect(() => {
     let ignore = false;
     const timer = setTimeout(() => {
-      refreshGatewayStatus();
+      void refreshGatewayStatus();
     }, 0);
     getWhatsAppStatus()
       .then((res: any) => {
@@ -719,7 +719,7 @@ export function CampaignsView({
       }
     };
 
-    loadData();
+    void loadData();
 
     return () => {
       ignore = true;
@@ -751,7 +751,7 @@ export function CampaignsView({
       }
     };
 
-    checkRole();
+    void checkRole();
     return () => {
       ignore = true;
     };
@@ -936,7 +936,7 @@ export function CampaignsView({
       setFormScheduleHour('09');
       setFormScheduleMinute('00');
       setFormScheduleTime('09:00');
-      setCalendarMonth(new Date(parseInt(tomorrowWib.yyyy, 10), parseInt(tomorrowWib.mm, 10) - 1, 1));
+      setCalendarMonth(new Date(Number.parseInt(tomorrowWib.yyyy, 10), Number.parseInt(tomorrowWib.mm, 10) - 1, 1));
     }
     setClockDialMode('hour');
 
@@ -980,7 +980,7 @@ export function CampaignsView({
         setFormScheduleHour(wib.hh);
         setFormScheduleMinute(wib.min);
         setFormScheduleTime(`${wib.hh}:${wib.min}`);
-        setCalendarMonth(new Date(parseInt(wib.yyyy, 10), parseInt(wib.mm, 10) - 1, 1));
+        setCalendarMonth(new Date(Number.parseInt(wib.yyyy, 10), Number.parseInt(wib.mm, 10) - 1, 1));
       }
     } else {
       const tomorrow = new Date((currentTimestamp || 1762300800000) + 24 * 60 * 60 * 1000);
@@ -990,7 +990,7 @@ export function CampaignsView({
         setFormScheduleHour('09');
         setFormScheduleMinute('00');
         setFormScheduleTime('09:00');
-        setCalendarMonth(new Date(parseInt(tomorrowWib.yyyy, 10), parseInt(tomorrowWib.mm, 10) - 1, 1));
+        setCalendarMonth(new Date(Number.parseInt(tomorrowWib.yyyy, 10), Number.parseInt(tomorrowWib.mm, 10) - 1, 1));
       }
     }
 
@@ -1046,7 +1046,7 @@ export function CampaignsView({
       const dateTimeString = `${formScheduleDate}T${timeCombined}:00+07:00`;
       const scheduleDateTime = new Date(dateTimeString);
 
-      if (isNaN(scheduleDateTime.getTime())) {
+      if (Number.isNaN(scheduleDateTime.getTime())) {
         setFormError('Format tanggal atau jam jadwal tidak valid.');
         return;
       }
@@ -1148,7 +1148,7 @@ export function CampaignsView({
         }
 
         if (newRow) {
-          fetchCampaigns();
+          void fetchCampaigns();
           onCampaignUpdated?.();
 
           if (effectiveOrgId && currentUserId) {
@@ -1205,7 +1205,7 @@ export function CampaignsView({
               ? `Kampanye "${formName.trim()}" sedang diproses! (${res.data.validRecipients} kontak siap dikirim via antrean persisten).`
               : `Kampanye "${formName.trim()}" berhasil dijadwalkan untuk ${res.data.validRecipients} penerima.`,
         });
-        fetchCampaigns();
+        void fetchCampaigns();
         onCampaignUpdated?.();
 
         if (effectiveOrgId && currentUserId) {
@@ -1306,7 +1306,7 @@ export function CampaignsView({
       if ((isCampaignTerminal && recipientMetrics.pending === 0 && recipientMetrics.processing === 0) || isQueueTerminal) {
         return;
       }
-      pollRecipients();
+      void pollRecipients();
     }, 4000);
 
     return () => {
@@ -3022,8 +3022,8 @@ export function CampaignsView({
 
                       {/* Lingkaran Dial Jam Analog (260x260) */}
                       {(() => {
-                        const hNum = parseInt(formScheduleHour, 10) || 0;
-                        const mNum = parseInt(formScheduleMinute, 10) || 0;
+                        const hNum = Number.parseInt(formScheduleHour, 10) || 0;
+                        const mNum = Number.parseInt(formScheduleMinute, 10) || 0;
 
                         // Perhitungan Hand dan Tip
                         let currentAngleDeg = 0;
@@ -3280,7 +3280,7 @@ export function CampaignsView({
                               key={s.label}
                               style={styles.stepperBtn}
                               onPress={() => {
-                                const cur = parseInt(formScheduleMinute, 10) || 0;
+                                const cur = Number.parseInt(formScheduleMinute, 10) || 0;
                                 const next = (cur + s.delta + 60) % 60;
                                 const mStr = String(next).padStart(2, '0');
                                 setFormScheduleMinute(mStr);
@@ -3309,7 +3309,7 @@ export function CampaignsView({
                                 setFormScheduleHour('');
                                 return;
                               }
-                              const num = parseInt(clean, 10);
+                              const num = Number.parseInt(clean, 10);
                               if (num >= 0 && num <= 23) {
                                 const padded = String(num).padStart(2, '0');
                                 setFormScheduleHour(padded);
@@ -3337,7 +3337,7 @@ export function CampaignsView({
                                 setFormScheduleMinute('');
                                 return;
                               }
-                              const num = parseInt(clean, 10);
+                              const num = Number.parseInt(clean, 10);
                               if (num >= 0 && num <= 59) {
                                 const padded = String(num).padStart(2, '0');
                                 setFormScheduleMinute(padded);
@@ -3410,7 +3410,7 @@ export function CampaignsView({
                       const checkMs = new Date(
                         `${formScheduleDate}T${formScheduleHour}:${formScheduleMinute}:00+07:00`
                       ).getTime();
-                      const isFuture = !isNaN(checkMs) && (currentTimestamp > 0 ? checkMs > currentTimestamp : true);
+                      const isFuture = !Number.isNaN(checkMs) && (currentTimestamp > 0 ? checkMs > currentTimestamp : true);
 
                       return (
                         <>
@@ -3467,7 +3467,7 @@ export function CampaignsView({
                           )}
 
                           {/* Peringatan waktu lampau */}
-                          {!isFuture && !isNaN(checkMs) && (
+                          {!isFuture && !Number.isNaN(checkMs) && (
                             <View style={styles.scheduleExpiredAlert}>
                               <AppIcon name="alert" size={14} color="#DC2626" />
                               <Text style={styles.scheduleExpiredAlertText}>
@@ -3739,7 +3739,7 @@ export function CampaignsView({
                           <Text style={styles.contactPickerName} numberOfLines={1}>
                             {contact.name}
                           </Text>
-                          {contact.label && (
+                          {Boolean(contact.label) && (
                             <View style={styles.contactPickerLabelBadge}>
                               <Text style={styles.contactPickerLabelText}>{contact.label}</Text>
                             </View>
@@ -4107,7 +4107,7 @@ export function CampaignsView({
                   <TouchableOpacity
                     style={styles.btnSecondary}
                     onPress={() => {
-                      handleDuplicateCampaign(activeCampaign);
+                      void handleDuplicateCampaign(activeCampaign);
                       setIsDetailModalOpen(false);
                     }}
                   >

@@ -127,10 +127,10 @@ export function NotificationsModal({
         });
 
       const unsubscribeRealtime = subscribeToNotifications(organizationId, userId, () => {
-        loadData();
+        void loadData();
       });
       const unsubscribeLocal = addNotificationChangeListener(() => {
-        loadData();
+        void loadData();
       });
       return () => {
         ignore = true;

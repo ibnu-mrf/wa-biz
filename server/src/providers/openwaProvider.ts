@@ -92,6 +92,14 @@ export function normalizeChatId(inputPhoneOrJid: string): { chatId?: string; err
   return { chatId: `${cleanDigits}@c.us` };
 }
 
+function stripTrailingSlashes(url: string): string {
+  let cleaned = url.trim();
+  while (cleaned.endsWith('/')) {
+    cleaned = cleaned.slice(0, -1);
+  }
+  return cleaned;
+}
+
 export class OpenWAProvider implements IWhatsAppProvider {
   public readonly providerType: ProviderType = 'openwa';
   private baseUrl: string;
@@ -100,14 +108,14 @@ export class OpenWAProvider implements IWhatsAppProvider {
   private timeoutMs: number;
 
   constructor(options?: OpenWAProviderOptions) {
-    this.baseUrl = (options?.baseUrl || config.openwaBaseUrl || 'http://127.0.0.1:2785').replace(/\/+$/, '');
+    this.baseUrl = stripTrailingSlashes(options?.baseUrl || config.openwaBaseUrl || 'http://127.0.0.1:2785');
     this.apiKey = options?.apiKey ?? config.openwaApiKey ?? '';
     this.sessionId = options?.sessionId ?? config.openwaSessionId ?? '';
     this.timeoutMs = options?.timeoutMs ?? config.openwaRequestTimeoutMs ?? 10000;
   }
 
   public setBaseUrl(url: string): void {
-    this.baseUrl = url.replace(/\/+$/, '');
+    this.baseUrl = stripTrailingSlashes(url);
   }
 
   public setApiKey(apiKey: string): void {

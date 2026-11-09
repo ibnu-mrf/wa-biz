@@ -103,7 +103,7 @@ export async function createPersistentCampaign(
       return { success: false, error: 'Waktu jadwal siaran wajib diisi untuk mode terjadwal.' };
     }
     const scheduleDate = new Date(params.scheduledAt);
-    if (isNaN(scheduleDate.getTime())) {
+    if (Number.isNaN(scheduleDate.getTime())) {
       return { success: false, error: 'Format tanggal waktu jadwal tidak valid.' };
     }
     if (scheduleDate.getTime() <= Date.now()) {
@@ -560,7 +560,7 @@ export async function updateCampaign(
     if (params.scheduledAt !== undefined) {
       if (params.scheduledAt !== null) {
         const scheduleDate = new Date(params.scheduledAt);
-        if (isNaN(scheduleDate.getTime())) {
+        if (Number.isNaN(scheduleDate.getTime())) {
           return { success: false, error: 'Format tanggal waktu jadwal tidak valid.', statusCode: 400 };
         }
         if (scheduleDate.getTime() <= Date.now()) {

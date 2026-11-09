@@ -315,8 +315,11 @@ export async function createNotification(
 
   // Helper untuk menyimpan ke fallback lokal sesi
   const saveToLocalFallback = (): AppNotification => {
+    const randomSuffix = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID().slice(0, 8)
+      : (typeof crypto !== 'undefined' && crypto.getRandomValues ? crypto.getRandomValues(new Uint32Array(1))[0].toString(36) : Date.now().toString(36));
     const mockItem: AppNotification = {
-      id: `local-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+      id: `local-${Date.now()}-${randomSuffix}`,
       organization_id,
       user_id,
       title: cleanTitle,
@@ -615,7 +618,7 @@ export function subscribeToNotifications(
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      void supabase.removeChannel(channel);
     };
   } catch (e) {
     console.warn('[Notifications] Exception saat subscribe realtime:', e);
@@ -886,11 +889,14 @@ export async function notifyChatEvent(params: {
       break;
   }
 
+  const fallbackRand = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID().slice(0, 8)
+    : (typeof crypto !== 'undefined' && crypto.getRandomValues ? crypto.getRandomValues(new Uint32Array(1))[0].toString(36) : Date.now().toString(36));
   const dedupKey = buildDedupKey(
     'chat',
     eventType,
     organizationId,
-    messageId || `${conversationId}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`
+    messageId || `${conversationId}_${Date.now()}_${fallbackRand}`
   );
   await createNotification({
     organization_id: organizationId,

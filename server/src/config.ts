@@ -33,13 +33,13 @@ export interface WorkerConfig {
 
 export function loadConfig(): WorkerConfig {
   const host = process.env.HOST || '127.0.0.1';
-  const port = parseInt(process.env.PORT || '4000', 10);
+  const port = Number.parseInt(process.env.PORT || '4000', 10);
   const localApiKey = process.env.LOCAL_API_KEY?.trim() || '';
   const sessionDir = path.resolve(process.env.SESSION_DIR || path.join(__dirname, '../sessions'));
   const showTerminalQr = process.env.SHOW_TERMINAL_QR !== 'false';
-  const maxReconnectRetries = parseInt(process.env.MAX_RECONNECT_RETRIES || '5', 10);
-  const initialReconnectDelayMs = parseInt(process.env.INITIAL_RECONNECT_DELAY_MS || '2000', 10);
-  const maxReconnectDelayMs = parseInt(process.env.MAX_RECONNECT_DELAY_MS || '30000', 10);
+  const maxReconnectRetries = Number.parseInt(process.env.MAX_RECONNECT_RETRIES || '5', 10);
+  const initialReconnectDelayMs = Number.parseInt(process.env.INITIAL_RECONNECT_DELAY_MS || '2000', 10);
+  const maxReconnectDelayMs = Number.parseInt(process.env.MAX_RECONNECT_DELAY_MS || '30000', 10);
   const logLevel = process.env.LOG_LEVEL || 'info';
   const workerOrgId = process.env.WORKER_ORG_ID?.trim() || '';
   const autoStartWhatsApp = process.env.AUTO_START_WHATSAPP === 'true';
@@ -49,11 +49,14 @@ export function loadConfig(): WorkerConfig {
   const metaWebhookVerifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN?.trim() || '';
   const metaSystemUserToken = process.env.META_SYSTEM_USER_TOKEN?.trim() || '';
   const metaApiBaseUrl = process.env.META_API_BASE_URL?.trim() || 'https://graph.facebook.com';
-  const openwaBaseUrl = (process.env.OPENWA_BASE_URL || 'http://127.0.0.1:2785').replace(/\/+$/, '');
+  let openwaBaseUrl = (process.env.OPENWA_BASE_URL || 'http://127.0.0.1:2785').trim();
+  while (openwaBaseUrl.endsWith('/')) {
+    openwaBaseUrl = openwaBaseUrl.slice(0, -1);
+  }
   const openwaApiKey = process.env.OPENWA_API_KEY?.trim() || '';
   const openwaSessionId = process.env.OPENWA_SESSION_ID?.trim() || '';
   const openwaTestOrgId = process.env.OPENWA_TEST_ORG_ID?.trim() || '';
-  const openwaRequestTimeoutMs = parseInt(process.env.OPENWA_REQUEST_TIMEOUT_MS || '10000', 10);
+  const openwaRequestTimeoutMs = Number.parseInt(process.env.OPENWA_REQUEST_TIMEOUT_MS || '10000', 10);
   const openwaWebhookSecret = process.env.OPENWA_WEBHOOK_SECRET?.trim() || '';
 
   const defaultOrigins = [

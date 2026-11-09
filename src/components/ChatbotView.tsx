@@ -292,7 +292,7 @@ export function ChatbotView({
     }
 
     let isMounted = true;
-    (async () => {
+    void (async () => {
       try {
         const cfg = await loadChatbotConfig(organizationId);
         if (!isMounted) return;

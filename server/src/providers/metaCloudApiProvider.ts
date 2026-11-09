@@ -24,13 +24,21 @@ export interface MetaCredentials {
   messagingTier?: string;
 }
 
+function stripTrailingSlashes(url: string): string {
+  let cleaned = url.trim();
+  while (cleaned.endsWith('/')) {
+    cleaned = cleaned.slice(0, -1);
+  }
+  return cleaned;
+}
+
 export class MetaCloudApiProvider implements IWhatsAppProvider {
   public readonly providerType: ProviderType = 'meta_cloud_api';
   private baseUrl: string;
   private apiVersion: string;
 
   constructor(customBaseUrl?: string, customApiVersion?: string) {
-    this.baseUrl = (customBaseUrl || config.metaApiBaseUrl || 'https://graph.facebook.com').replace(/\/+$/, '');
+    this.baseUrl = stripTrailingSlashes(customBaseUrl || config.metaApiBaseUrl || 'https://graph.facebook.com');
     this.apiVersion = customApiVersion || config.metaGraphApiVersion || 'v21.0';
   }
 
@@ -38,7 +46,7 @@ export class MetaCloudApiProvider implements IWhatsAppProvider {
    * Mengatur URL basis untuk pengujian mock
    */
   public setBaseUrl(url: string): void {
-    this.baseUrl = url.replace(/\/+$/, '');
+    this.baseUrl = stripTrailingSlashes(url);
   }
 
   /**

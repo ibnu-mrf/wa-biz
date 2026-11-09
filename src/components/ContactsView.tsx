@@ -263,7 +263,7 @@ export function ContactsView({
         console.warn('[ContactsView] Gagal memeriksa role pengguna:', e);
       }
     };
-    fetchRole();
+    void fetchRole();
     return () => {
       ignore = true;
     };
@@ -434,7 +434,7 @@ export function ContactsView({
       }
     };
 
-    loadData();
+    void loadData();
 
     return () => {
       ignore = true;
@@ -931,7 +931,7 @@ export function ContactsView({
   // ==========================================
   const handleCopyPhone = (phone: string, id: string) => {
     if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(phone);
+      void navigator.clipboard.writeText(phone);
     }
     setCopiedPhoneId(id);
     setTimeout(() => {

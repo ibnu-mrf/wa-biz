@@ -329,7 +329,7 @@ export function AuthView({ initialMode = 'login', onSuccess }: AuthViewProps) {
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
     if (!emailRegex.test(cleanEmail)) {
       setErrorMessage('Format alamat email tidak valid.');
       return;
@@ -577,7 +577,7 @@ export function AuthView({ initialMode = 'login', onSuccess }: AuthViewProps) {
                       <AppIcon
                         name="user"
                         size={17}
-                        color={focusedField === 'fullName' ? '#0D9488' : '#0D9488'}
+                        color="#0D9488"
                       />
                     </View>
                     <TextInput

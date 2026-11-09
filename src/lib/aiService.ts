@@ -1116,11 +1116,11 @@ export function generateGeneralAiResponse(
 
   // 1. MATEMATIKA & KALKULASI ANGKA
   // Contoh: "hitung 25 * 14", "100 / 4", "15% dari 1500000", "50 + 75", "akar dari 64"
-  const mathPercentageMatch = p.match(/(\d+(?:[.,]\d+)?)\s*(?:%|persen)\s*(?:dari|of|\*|x|×)\s*(?:rp\.?\s*)?(\d+[\d.,]*)/i);
+  const mathPercentageMatch = p.match(/(\d+(?:[.,]\d+)?)\s*(?:%|persen)\s*(?:dari|of|\*|x|×)\s*(?:rp\.?\s*)?(\d+(?:[.,]\d+)?)/i);
   if (mathPercentageMatch) {
-    const pct = parseFloat(mathPercentageMatch[1].replace(',', '.'));
-    const base = parseFloat(mathPercentageMatch[2].replace(/[.,]/g, ''));
-    if (!isNaN(pct) && !isNaN(base)) {
+    const pct = Number.parseFloat(mathPercentageMatch[1].replace(',', '.'));
+    const base = Number.parseFloat(mathPercentageMatch[2].replace(/[.,]/g, ''));
+    if (!Number.isNaN(pct) && !Number.isNaN(base)) {
       const result = (pct / 100) * base;
       const formattedResult = new Intl.NumberFormat('id-ID').format(result);
       const formattedBase = new Intl.NumberFormat('id-ID').format(base);
@@ -1198,7 +1198,7 @@ function safeEvaluateMath(expression: string): number | null {
       return inner;
     }
     if (next !== null && /^\d+(?:\.\d+)?$/.test(next)) {
-      return parseFloat(consume());
+      return Number.parseFloat(consume());
     }
     throw new Error(`Unexpected token '${next}'`);
   }
@@ -1206,7 +1206,7 @@ function safeEvaluateMath(expression: string): number | null {
   try {
     const result = parseExpr();
     if (pos !== tokens.length) return null;
-    if (typeof result === 'number' && !isNaN(result) && isFinite(result)) {
+    if (typeof result === 'number' && !Number.isNaN(result) && Number.isFinite(result)) {
       return result;
     }
     return null;
@@ -1226,8 +1226,8 @@ function safeEvaluateMath(expression: string): number | null {
     // Cek akar kuadrat
     const sqrtMatch = p.match(/(?:akar(?: kuadrat)?(?: dari)?|sqrt)\s*(\d+(?:[.,]\d+)?)/i);
     if (sqrtMatch) {
-      const val = parseFloat(sqrtMatch[1].replace(',', '.'));
-      if (!isNaN(val) && val >= 0) {
+      const val = Number.parseFloat(sqrtMatch[1].replace(',', '.'));
+      if (!Number.isNaN(val) && val >= 0) {
         const res = Math.sqrt(val);
         return {
           text: `${prefixGreeting}Akar kuadrat dari **${val}** adalah **${res}**.\n\nApakah ada perhitungan lain yang ingin Anda selesaikan?`,
@@ -1247,7 +1247,7 @@ function safeEvaluateMath(expression: string): number | null {
     if (/^[\d\s\+\-\*\/\(\)\.]+$/.test(cleanedExpr)) {
       try {
         const result = safeEvaluateMath(cleanedExpr);
-        if (result !== null && typeof result === 'number' && !isNaN(result) && isFinite(result)) {
+        if (result !== null && typeof result === 'number' && !Number.isNaN(result) && Number.isFinite(result)) {
           const formatted = Number.isInteger(result)
             ? new Intl.NumberFormat('id-ID').format(result)
             : result.toFixed(2);
@@ -1696,7 +1696,7 @@ function safeEvaluateMath(expression: string): number | null {
       "Kenapa programmer lebih suka minum teh daripada kopi? Karena kalau minum kopi, mereka takut dapat *Java* exception! ☕💻",
       "Ikan apa yang paling pendiam? Ikan pause! 🐟⏸️",
     ];
-    const pickedJoke = jokes[Math.floor(Math.random() * jokes.length)];
+    const pickedJoke = jokes[Math.floor((crypto.getRandomValues(new Uint32Array(1))[0] / 0x100000000) * jokes.length)];
     return {
       text: `${prefixGreeting}Biar suasana makin santai dan ceria, ini lelucon untuk Anda:\n\n*${pickedJoke}*\n\nSemoga membuat Anda tersenyum hari ini! Ada hal lain yang bisa kami bantu?`,
       detectedIntent: 'humor',
@@ -1709,7 +1709,7 @@ function safeEvaluateMath(expression: string): number | null {
       "Burung merpati terbang melayang,\nHinggap sebentar di dahan cemara.\nKepada sesama mari berkasih sayang,\nHidup rukun damai dan bahagia! 🌿",
       "Pergi ke pasar membeli durian,\nJangan lupa mencicipi nangka.\nDengan WABiz jalin kebersamaan,\nBisnis maju pelanggan pun suka! 🚀",
     ];
-    const pickedPantun = pantunList[Math.floor(Math.random() * pantunList.length)];
+    const pickedPantun = pantunList[Math.floor((crypto.getRandomValues(new Uint32Array(1))[0] / 0x100000000) * pantunList.length)];
     return {
       text: `${prefixGreeting}Ini pantun istimewa untuk Anda:\n\n${pickedPantun}\n\nSemoga harimu menyenangkan dan penuh keberkahan!`,
       detectedIntent: 'pantun',
@@ -1760,8 +1760,10 @@ function safeEvaluateMath(expression: string): number | null {
   // Untuk pertanyaan terbuka yang tidak masuk ke kategori di atas,
   // bertindak layaknya asisten AI generatif modern: menganalisis konteks dan memberikan panduan terstruktur
   const cleanedTopic = rawPrompt
-    .replace(/^(?:tolong\s+)?(?:coba\s+)?(?:bantu(?:kan)?\s+)?(?:jelaskan(?:kan)?|apa(?:kah)?\s*(?:itu|maksud|arti(?:nya)?)?|bagaimana\s*(?:cara(?:nya)?)?|mengapa|kenapa|sebutkan|berikan|tuliskan|info(?:rmasi)?\s*(?:tentang)?)\s*/i, '')
-    .replace(/[\?!.]+$/, '')
+    .replace(/^(?:tolong\s+|coba\s+|bantu(?:kan)?\s+)+/i, '')
+    .replace(/^(?:jelaskan(?:kan)?|apa(?:kah)?|bagaimana|mengapa|kenapa|sebutkan|berikan|tuliskan|info(?:rmasi)?)\b\s*/i, '')
+    .replace(/^(?:tentang|maksud|arti(?:nya)?|cara(?:nya)?|itu)\b\s*/i, '')
+    .replace(/[.?!]+$/, '')
     .trim();
 
   const topicLabel = cleanedTopic.length > 2 ? cleanedTopic : rawPrompt.trim();

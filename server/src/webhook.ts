@@ -216,7 +216,7 @@ export async function processWebhookPayload(body: any): Promise<void> {
           const wamid = statusItem.id;
           const rawStatus = statusItem.status;
           const normalizedStatus = metaCloudApiProvider.normalizeDeliveryStatus(rawStatus);
-          const timestamp = statusItem.timestamp ? new Date(parseInt(statusItem.timestamp, 10) * 1000).toISOString() : new Date().toISOString();
+          const timestamp = statusItem.timestamp ? new Date(Number.parseInt(statusItem.timestamp, 10) * 1000).toISOString() : new Date().toISOString();
           const errors = statusItem.errors ? JSON.stringify(statusItem.errors) : null;
 
           console.log(`[Webhook Status] Pesan ${wamid} -> ${normalizedStatus} (Penerima: +${maskPhone(statusItem.recipient_id)})`);
@@ -299,7 +299,7 @@ export async function processWebhookPayload(body: any): Promise<void> {
           console.log(`[Webhook Pesan] Pesan masuk diterima (Org: ${resolvedOrgId}, MsgId: ${wamid}, Phone: +${maskPhone(senderPhone)}, Length: ${textBody.length} chars)`);
 
           // Simpan pesan masuk ke Supabase
-          const msgTimestamp = msg.timestamp ? parseInt(msg.timestamp, 10) * 1000 : Date.now();
+          const msgTimestamp = msg.timestamp ? Number.parseInt(msg.timestamp, 10) * 1000 : Date.now();
           const persistResult = await persistInboundWhatsAppMessage({
             orgId: resolvedOrgId,
             senderPhone,
@@ -553,10 +553,13 @@ export interface OpenWaWebhookTestHooks {
   customGetReplyFn?: (orgId: string, inboundId: string) => Promise<{ id: string; provider_message_id?: string; body: string } | null>;
 }
 
-export let openWaWebhookTestHooks: OpenWaWebhookTestHooks = {};
+export const openWaWebhookTestHooks: OpenWaWebhookTestHooks = {};
 
 export function setOpenWaWebhookTestHooks(hooks: OpenWaWebhookTestHooks): void {
-  openWaWebhookTestHooks = hooks;
+  for (const key of Object.keys(openWaWebhookTestHooks) as (keyof OpenWaWebhookTestHooks)[]) {
+    delete openWaWebhookTestHooks[key];
+  }
+  Object.assign(openWaWebhookTestHooks, hooks);
 }
 
 /**
