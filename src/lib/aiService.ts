@@ -1077,6 +1077,86 @@ export function processGroundedBotReply(
 }
 
 /**
+ * Parser persentase matematika linier tanpa Regular Expression.
+ * Mencegah issue keamanan SonarQube S5852 (ReDoS / Catastrophic Backtracking).
+ */
+function parseLinearMathPercentage(input: string): { pct: number; base: number } | null {
+  const lower = input.toLowerCase();
+  let markerIdx = lower.indexOf('%');
+  let markerLen = 1;
+  if (markerIdx === -1) {
+    markerIdx = lower.indexOf('persen');
+    markerLen = 6;
+  }
+  if (markerIdx === -1) return null;
+
+  const left = lower.slice(0, markerIdx).trimEnd();
+  if (left.length === 0) return null;
+
+  let startPct = left.length;
+  while (startPct > 0) {
+    const ch = left[startPct - 1];
+    if ((ch >= '0' && ch <= '9') || ch === '.' || ch === ',') {
+      startPct--;
+    } else {
+      break;
+    }
+  }
+  if (startPct === left.length) return null;
+
+  const pctRaw = left.slice(startPct);
+  let pctClean = '';
+  for (let i = 0; i < pctRaw.length; i++) {
+    pctClean += pctRaw[i] === ',' ? '.' : pctRaw[i];
+  }
+  const pct = Number.parseFloat(pctClean);
+  if (Number.isNaN(pct)) return null;
+
+  let right = lower.slice(markerIdx + markerLen).trimStart();
+  const operators = ['dari', 'of', '*', 'x', '×'];
+  let matchedOpLen = 0;
+  for (const op of operators) {
+    if (right.startsWith(op)) {
+      matchedOpLen = op.length;
+      break;
+    }
+  }
+  if (matchedOpLen === 0) return null;
+  right = right.slice(matchedOpLen).trimStart();
+
+  if (right.startsWith('rp.')) {
+    right = right.slice(3).trimStart();
+  } else if (right.startsWith('rp')) {
+    right = right.slice(2).trimStart();
+  }
+
+  let endBase = 0;
+  while (endBase < right.length) {
+    const ch = right[endBase];
+    if ((ch >= '0' && ch <= '9') || ch === '.' || ch === ',') {
+      endBase++;
+    } else {
+      break;
+    }
+  }
+  if (endBase === 0) return null;
+
+  const rawBase = right.slice(0, endBase);
+  let baseClean = '';
+  for (let i = 0; i < rawBase.length; i++) {
+    const ch = rawBase[i];
+    if (ch >= '0' && ch <= '9') {
+      baseClean += ch;
+    }
+  }
+  if (!baseClean) return null;
+  const base = Number.parseFloat(baseClean);
+  if (Number.isNaN(base)) return null;
+
+  return { pct, base };
+}
+
+/**
  * Mesin Percakapan AI Cerdas (General Conversational AI Engine)
  * Menjawab pertanyaan umum, sains, teknologi, matematika, copywriting, dan obrolan
  * layaknya AI generatif percakapan modern (ChatGPT / Gemini / Copilot).
@@ -1116,10 +1196,9 @@ export function generateGeneralAiResponse(
 
   // 1. MATEMATIKA & KALKULASI ANGKA
   // Contoh: "hitung 25 * 14", "100 / 4", "15% dari 1500000", "50 + 75", "akar dari 64"
-  const mathPercentageMatch = p.match(/(\d+(?:[.,]\d+)?)\s*(?:%|persen)\s*(?:dari|of|\*|x|×)\s*(?:rp\.?\s*)?(\d+(?:[.,]\d+)?)/i);
-  if (mathPercentageMatch) {
-    const pct = Number.parseFloat(mathPercentageMatch[1].replace(',', '.'));
-    const base = Number.parseFloat(mathPercentageMatch[2].replace(/[.,]/g, ''));
+  const mathPerc = parseLinearMathPercentage(p);
+  if (mathPerc) {
+    const { pct, base } = mathPerc;
     if (!Number.isNaN(pct) && !Number.isNaN(base)) {
       const result = (pct / 100) * base;
       const formattedResult = new Intl.NumberFormat('id-ID').format(result);
@@ -1756,16 +1835,108 @@ function safeEvaluateMath(expression: string): number | null {
     };
   }
 
+/**
+ * Pembersih topik prompt cerdas secara linier tanpa Regular Expression.
+ * Mencegah issue keamanan SonarQube S5852 (ReDoS / Catastrophic Backtracking).
+ */
+function cleanPromptTopicLinear(rawPrompt: string): string {
+  let text = rawPrompt.trim();
+
+  // 1. Bersihkan tanda baca di akhir kalimat (. ? !)
+  while (text.length > 0) {
+    const last = text[text.length - 1];
+    if (last === '.' || last === '?' || last === '!' || last === ' ') {
+      text = text.slice(0, -1);
+    } else {
+      break;
+    }
+  }
+
+  // 2. Bersihkan kata awalan permohonan (tolong, coba, bantu, bantukan) berulang di awal
+  const politePrefixes = ['tolong', 'coba', 'bantukan', 'bantu'];
+  let keepStripping = true;
+  while (keepStripping) {
+    keepStripping = false;
+    text = text.trimStart();
+    const lower = text.toLowerCase();
+    for (const prefix of politePrefixes) {
+      if (lower.startsWith(prefix)) {
+        const nextChar = lower[prefix.length];
+        if (nextChar === undefined || nextChar === ' ' || nextChar === ':' || nextChar === ',') {
+          text = text.slice(prefix.length).trimStart();
+          keepStripping = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // 3. Bersihkan kata tanya / perintah di awal kalimat
+  const questionWords = [
+    'jelaskankan',
+    'jelaskan',
+    'apakah',
+    'apa',
+    'bagaimana',
+    'mengapa',
+    'kenapa',
+    'sebutkan',
+    'berikan',
+    'tuliskan',
+    'informasi',
+    'info',
+  ];
+  text = text.trimStart();
+  const lowerQ = text.toLowerCase();
+  for (const qWord of questionWords) {
+    if (lowerQ.startsWith(qWord)) {
+      const nextChar = lowerQ[qWord.length];
+      if (nextChar === undefined || nextChar === ' ' || nextChar === ':' || nextChar === ',') {
+        text = text.slice(qWord.length).trimStart();
+        break;
+      }
+    }
+  }
+
+  // 4. Bersihkan kata perantara topik ("tentang", "maksud", "artinya", "arti", "caranya", "cara", "itu")
+  const prepositionWords = [
+    'tentang',
+    'maksud',
+    'artinya',
+    'arti',
+    'caranya',
+    'cara',
+    'itu',
+  ];
+  text = text.trimStart();
+  const lowerP = text.toLowerCase();
+  for (const pWord of prepositionWords) {
+    if (lowerP.startsWith(pWord)) {
+      const nextChar = lowerP[pWord.length];
+      if (nextChar === undefined || nextChar === ' ' || nextChar === ':' || nextChar === ',') {
+        text = text.slice(pWord.length).trimStart();
+        break;
+      }
+    }
+  }
+
+  // 5. Bersihkan lagi tanda baca sisa di akhir dan spasi
+  while (text.length > 0) {
+    const last = text[text.length - 1];
+    if (last === '.' || last === '?' || last === '!' || last === ' ') {
+      text = text.slice(0, -1);
+    } else {
+      break;
+    }
+  }
+
+  return text.trim();
+}
+
   // 7. UNIVERSAL INTELLIGENT AI FALLBACK
   // Untuk pertanyaan terbuka yang tidak masuk ke kategori di atas,
   // bertindak layaknya asisten AI generatif modern: menganalisis konteks dan memberikan panduan terstruktur
-  const cleanedTopic = rawPrompt
-    .replace(/^(?:tolong\s+|coba\s+|bantu(?:kan)?\s+)+/i, '')
-    .replace(/^(?:jelaskan(?:kan)?|apa(?:kah)?|bagaimana|mengapa|kenapa|sebutkan|berikan|tuliskan|info(?:rmasi)?)\b\s*/i, '')
-    .replace(/^(?:tentang|maksud|arti(?:nya)?|cara(?:nya)?|itu)\b\s*/i, '')
-    .replace(/[.?!]+$/, '')
-    .trim();
-
+  const cleanedTopic = cleanPromptTopicLinear(rawPrompt);
   const topicLabel = cleanedTopic.length > 2 ? cleanedTopic : rawPrompt.trim();
 
   return {
