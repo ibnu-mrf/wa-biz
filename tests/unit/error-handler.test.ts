@@ -72,3 +72,4 @@ describe('Unit: Application Error Classifier & Handler (src/lib/errorHandler.ts)
     assert.ok(formatted.includes('Periksa koneksi internet'));
   });
 });
+

@@ -84,3 +84,4 @@ describe('Unit: WhatsApp Message Extraction (message-utils)', () => {
     assert.equal(extractMessageText({ unknownMessage: {} }), '');
   });
 });
+

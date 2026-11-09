@@ -18,3 +18,4 @@ describe('Unit: Backend Worker Configuration (server/src/config.ts)', () => {
     assert.equal(config.openwaBaseUrl.endsWith('/'), false);
   });
 });
+
