@@ -70,3 +70,4 @@ export function truncateMessageText(text, maxLength) {
   }
   return text.slice(0, maxLength) + '...';
 }
+
