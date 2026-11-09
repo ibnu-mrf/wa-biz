@@ -150,6 +150,12 @@ test.describe('Chatbot AI General Intelligence & Simulator Tests', () => {
 
     const chatInput = page.getByPlaceholder("Ketik pertanyaan uji coba (contoh: 'Berapa biaya pendaftaran?')...");
 
+    // 0. Uji Sapaan / Chit-chat Langsung ("Hallo kak apa kabar")
+    await chatInput.fill('Hallo kak apa kabar');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(500);
+    await expect(page.getByText(/kabar kami baik/i).last()).toBeVisible({ timeout: 5000 });
+
     // 1. Uji Matematika
     await chatInput.fill('Hitung 25 * 14');
     await page.keyboard.press('Enter');

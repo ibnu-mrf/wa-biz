@@ -265,7 +265,10 @@ export function SettingsView({
   const [showLogoutConfirm, setShowLogoutConfirm] = useState<boolean>(false);
   const isRefreshingRef = useRef<boolean>(false);
   const waStatusRef = useRef<WhatsAppWorkerStatus | null>(null);
-  waStatusRef.current = waStatus;
+
+  useEffect(() => {
+    waStatusRef.current = waStatus;
+  }, [waStatus]);
 
   // Countdown timer per detik untuk masa aktif QR
   useEffect(() => {
@@ -449,7 +452,9 @@ export function SettingsView({
     let pollTimer: any = null;
 
     if (activeTab === 'gateway') {
-      void refreshWhatsAppWorkerState(true);
+      setTimeout(() => {
+        if (!isCancelled) void refreshWhatsAppWorkerState(true);
+      }, 0);
 
       const scheduleNextPoll = () => {
         if (isCancelled) return;
@@ -1907,7 +1912,7 @@ export function SettingsView({
                           <Text style={styles.btnRetryWorkerText}>Coba Lagi</Text>
                         </TouchableOpacity>
                         <Text style={{ fontSize: 11, color: '#64748B' }}>
-                          Tekan "Coba Lagi" setelah worker aktif.
+                          {'Tekan "Coba Lagi" setelah worker aktif.'}
                         </Text>
                       </View>
                     </>

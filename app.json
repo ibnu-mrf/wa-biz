@@ -2,7 +2,7 @@
   "expo": {
     "name": "WABiz",
     "slug": "wa-biz",
-    "version": "1.0.4",
+    "version": "1.0.5",
     "scheme": "wabiz",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -17,7 +17,7 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.ibnumrf.wabiz",
-      "versionCode": 4
+      "versionCode": 5
     },
     "androidStatusBar": {
       "barStyle": "dark-content",

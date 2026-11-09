@@ -586,17 +586,14 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // 11. Panggil Google Gemini API dengan Model Failover (Resilient Multi-Model)
-    const preferredModel = Deno.env.get('GEMINI_MODEL') || 'gemini-2.5-flash-lite';
+    // 11. Panggil Google Gemini API dengan Model Cepat & Handal (Gemini 3.8 Flash / Flash Latest)
+    const preferredModel = Deno.env.get('GEMINI_MODEL') || 'gemini-3.8-flash';
     const candidateModels = Array.from(new Set([
       preferredModel,
-      'gemini-flash-latest',
-      'gemini-3.5-flash-lite',
-      'gemini-flash-lite-latest',
-      'gemini-3.1-flash-lite',
-      'gemini-3.5-flash',
-      'gemini-pro-latest',
       'gemini-3.8-flash',
+      'gemini-flash-latest',
+      'gemini-flash-lite-latest',
+      'gemini-2.5-flash',
     ]));
 
     const geminiPayload = {
@@ -608,7 +605,7 @@ Deno.serve(async (req: Request) => {
         temperature: 0.7, // Seimbang agar alami, cerdas, kreatif, dan tetap faktual
         topP: 0.9,
         topK: 40,
-        maxOutputTokens: 1200,
+        maxOutputTokens: 1000,
       },
     };
 
@@ -619,13 +616,19 @@ Deno.serve(async (req: Request) => {
     for (const modelName of candidateModels) {
       const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${geminiApiKey}`;
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5 detik timeout per model agar tidak menggantung Deno Deploy
+
         const res = await fetch(geminiEndpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(geminiPayload),
+          signal: controller.signal,
         });
+
+        clearTimeout(timeoutId);
 
         if (res.ok) {
           geminiResponse = res;
@@ -643,6 +646,7 @@ Deno.serve(async (req: Request) => {
         }
       } catch (fetchErr: unknown) {
         lastErrorText = fetchErr instanceof Error ? fetchErr.message : String(fetchErr);
+        console.warn(`Fetch model ${modelName} gagal: ${lastErrorText}`);
       }
     }
 

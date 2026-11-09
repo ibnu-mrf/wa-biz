@@ -1721,14 +1721,62 @@ export function getAiBackendUrl(): string {
 }
 
 export async function requestAiChatReply(request: AiChatRequest): Promise<AiChatResponse> {
+  const pLower = request.prompt.trim().toLowerCase();
+
+  // Fast-path: Sapaan & salam umum dijawab langsung oleh WABiz engine secara instan (<10ms)
+  const isGreetingFastPath =
+    pLower === 'halo' ||
+    pLower === 'hai' ||
+    pLower === 'hei' ||
+    pLower === 'p' ||
+    pLower === 'ping' ||
+    pLower.includes('apa kabar') ||
+    pLower.includes('assalamu') ||
+    pLower.startsWith('halo') ||
+    pLower.startsWith('hai') ||
+    pLower.startsWith('permisi');
+
+  const hasSpecificTopics =
+    pLower.includes('biaya') ||
+    pLower.includes('daftar') ||
+    pLower.includes('syarat') ||
+    pLower.includes('jadwal') ||
+    pLower.includes('alamat') ||
+    pLower.includes('lokasi') ||
+    pLower.includes('kontak') ||
+    pLower.includes('cs') ||
+    pLower.includes('admin');
+
+  if (isGreetingFastPath && !hasSpecificTopics) {
+    const quickReply = processGroundedBotReply(
+      request.prompt,
+      request.profile,
+      request.rules,
+      request.intentRules,
+      request.escalation,
+      request.conversationHistory
+    );
+    return {
+      text: quickReply.text,
+      isAiGenerated: true,
+      source: 'wabiz_ai_engine',
+      isEscalated: quickReply.isEscalated,
+      leadTagged: quickReply.leadTagged,
+      links: quickReply.links,
+    };
+  }
+
   const backendUrl = getAiBackendUrl();
 
-  // 1. Panggil Backend AI Edge Function (jika terkonfigurasi & online)
+  // 1. Panggil Backend AI Edge Function (dengan timeout ketat 1.5 detik agar respon secepat kilat)
   if (backendUrl && backendUrl.trim() !== '') {
     try {
       const { data: sessionData } = await supabase.auth.getSession();
       const accessToken = sessionData?.session?.access_token;
       const publishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.trim() ?? '';
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
 
       const response = await fetch(backendUrl, {
         method: 'POST',
@@ -1746,19 +1794,15 @@ export async function requestAiChatReply(request: AiChatRequest): Promise<AiChat
           intent_rules: request.intentRules,
           escalation: request.escalation,
         }),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         const json = await response.json();
         const lowerText = (json.text || '').toLowerCase();
-        const pLower = request.prompt.toLowerCase();
-        const isGeneralQuery =
-          !pLower.includes('biaya') &&
-          !pLower.includes('daftar') &&
-          !pLower.includes('syarat') &&
-          !pLower.includes('jadwal') &&
-          !pLower.includes('alamat') &&
-          !pLower.includes('kontak');
+        const isGeneralQuery = !hasSpecificTopics;
 
         const isColdRefusal =
           lowerText.includes('tidak tercantum dalam data resmi') ||
@@ -1801,17 +1845,17 @@ export async function requestAiChatReply(request: AiChatRequest): Promise<AiChat
       );
     } catch (err) {
       console.warn(
-        'Gagal menghubungi backend AI Edge Function, beralih ke aturan lokal terproteksi:',
-        err instanceof Error ? err.message : 'Koneksi terputus'
+        'Beralih instan ke WABiz Smart Conversational Engine:',
+        err instanceof Error ? err.message : 'Timeout'
       );
     }
   }
 
-  // 2. Cek Direct Gemini API Key (jika disetel di EXPO_PUBLIC_GEMINI_API_KEY)
+  // 2. Cek Direct Gemini API Key (jika disetel di EXPO_PUBLIC_GEMINI_API_KEY) dengan timeout 1.5s
   const clientGeminiApiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY?.trim();
   if (clientGeminiApiKey) {
     try {
-      const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${clientGeminiApiKey}`;
+      const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${clientGeminiApiKey}`;
       const orgName = request.profile?.orgName || 'Lembaga Kami';
       const systemInstruction = `Anda adalah Asisten AI Percakapan WABiz untuk ${orgName}. Jawablah secara cerdas, ramah, solutif, dan informatif seperti asisten AI modern (ChatGPT/Gemini). Jika ditanya tentang ${orgName}, gunakan fakta resmi lembaga. Jika ditanya hal umum, sains, teknologi, matematika, atau copywriting, berikan jawaban berkualitas tinggi.`;
 
@@ -1822,6 +1866,9 @@ export async function requestAiChatReply(request: AiChatRequest): Promise<AiChat
         },
       ];
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+
       const res = await fetch(geminiEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1830,7 +1877,10 @@ export async function requestAiChatReply(request: AiChatRequest): Promise<AiChat
           systemInstruction: { parts: [{ text: systemInstruction }] },
           generationConfig: { temperature: 0.7, maxOutputTokens: 1000 },
         }),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (res.ok) {
         const json = await res.json();

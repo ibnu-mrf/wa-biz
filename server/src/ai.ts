@@ -1859,6 +1859,48 @@ export async function generateWhatsAppAiReply(
   // Gunakan riwayat eksplisit (jika ada) atau riwayat memori per nomor pengirim
   const history = explicitHistory || getConversationHistory(senderPhone);
 
+  const pLower = prompt.trim().toLowerCase();
+  const isGreetingFastPath =
+    pLower === 'halo' ||
+    pLower === 'hai' ||
+    pLower === 'hei' ||
+    pLower === 'p' ||
+    pLower === 'ping' ||
+    pLower.includes('apa kabar') ||
+    pLower.includes('assalamu') ||
+    pLower.startsWith('halo') ||
+    pLower.startsWith('hai') ||
+    pLower.startsWith('permisi');
+
+  const hasSpecificTopics =
+    pLower.includes('biaya') ||
+    pLower.includes('daftar') ||
+    pLower.includes('syarat') ||
+    pLower.includes('jadwal') ||
+    pLower.includes('alamat') ||
+    pLower.includes('lokasi') ||
+    pLower.includes('kontak') ||
+    pLower.includes('cs') ||
+    pLower.includes('admin');
+
+  if (isGreetingFastPath && !hasSpecificTopics) {
+    const quickReply = processGroundedBotReply(
+      prompt,
+      profile,
+      config.rules,
+      config.intentRules,
+      config.escalation,
+      history
+    );
+    appendConversation(senderPhone, 'user', prompt);
+    appendConversation(senderPhone, 'assistant', quickReply.text);
+    return {
+      text: quickReply.text,
+      source: 'local_grounded_rules',
+      isEscalated: quickReply.isEscalated,
+    };
+  }
+
   const shouldTryGemini = forceEngine !== 'local' && process.env.FORCE_AI_ENGINE !== 'local';
 
   // 1. MESIN UTAMA: Google Gemini API (Direct Cloud atau via Supabase Edge Function chat-ai)
