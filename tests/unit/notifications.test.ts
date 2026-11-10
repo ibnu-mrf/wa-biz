@@ -96,7 +96,7 @@ describe('Unit: Notification System & Error Handling (src/lib/notifications.ts)'
       userId: TEST_USER,
       memberId: 'mem-001',
       fullName: 'Siti Rahma',
-      role: 'cs',
+      extraInfo: 'Role: cs',
       action: 'added',
     });
 

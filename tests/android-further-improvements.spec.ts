@@ -417,7 +417,7 @@ test.describe('WABiz Android Further Improvements Suite (Kampanye, Percakapan, N
     await page.waitForTimeout(500);
 
     // Verifikasi Komponen Detail Percakapan
-    await expect(page.getByText('Tandai Selesai').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: /Selesai/i }).or(page.getByText(/Selesai/i)).first()).toBeVisible();
     await expect(page.getByText('Alihkan ke AI').first()).toBeVisible();
     await expect(page.getByText('Hapus').first()).toBeVisible();
     await expect(page.getByPlaceholder('Ketik balasan pesan agen CS...')).toBeVisible();

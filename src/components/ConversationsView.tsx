@@ -1615,110 +1615,177 @@ export function ConversationsView({
                     accessibilityLabel="Kembali ke Daftar"
                     accessibilityRole="button"
                   >
-                    <AppIcon name="arrow-left" size={17} color={colors.textPrimary} />
+                    <AppIcon name="arrow-left" size={20} color={colors.textPrimary} />
                   </TouchableOpacity>
                 )}
 
-                <View style={[styles.detailAvatar, { backgroundColor: selectedConversation.avatarBg }]}>
-                  <Text style={styles.detailAvatarText}>{selectedConversation.avatarText}</Text>
+                <View style={[styles.detailAvatar, !isDesktop && styles.detailAvatarMobile, { backgroundColor: selectedConversation.avatarBg || '#EA580C' }]}>
+                  <Text style={[styles.detailAvatarText, !isDesktop && styles.detailAvatarTextMobile]}>{selectedConversation.avatarText}</Text>
                 </View>
 
                 <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
                   <View style={styles.detailNameRow}>
                     <Text
-                      style={[styles.detailCustomerName, { color: colors.textPrimary }]}
+                      style={[styles.detailCustomerName, !isDesktop && styles.detailCustomerNameMobile, { color: colors.textPrimary }]}
                       numberOfLines={1}
                       ellipsizeMode="tail"
                     >
                       {selectedConversation.name}
                     </Text>
-                    {!!selectedConversation.tag && (
+                    {isDesktop && !!selectedConversation.tag && (
                       <View style={styles.tagBadge}>
                         <Text style={styles.tagBadgeText}>{selectedConversation.tag}</Text>
                       </View>
                     )}
                   </View>
-                  <Text style={[styles.detailCustomerPhone, { color: colors.textSecondary }]} numberOfLines={1}>
-                    {selectedConversation.phone}
-                  </Text>
+                  {!isDesktop ? (
+                    <View style={styles.mobileCustomerStatusRow}>
+                      <View style={styles.mobileCustomerActiveDot} />
+                      <Text style={styles.mobileCustomerActiveText}>Aktif</Text>
+                    </View>
+                  ) : (
+                    <Text style={[styles.detailCustomerPhone, { color: colors.textSecondary }]} numberOfLines={1}>
+                      {selectedConversation.phone}
+                    </Text>
+                  )}
                 </View>
               </View>
 
-              {/* Status Badge selalu terlihat jelas di baris atas dengan flexShrink: 0 agar tidak terpotong */}
-              <View style={{ flexShrink: 0 }}>
-                <StatusBadge status={selectedConversation.status} />
-              </View>
+              {/* Status Badge selalu terlihat jelas pada desktop */}
+              {isDesktop && (
+                <View style={{ flexShrink: 0 }}>
+                  <StatusBadge status={selectedConversation.status} />
+                </View>
+              )}
             </View>
 
-            {/* Action Buttons: Status Transition (selalu 'open' | 'pending' | 'resolved') */}
-            <View style={[styles.detailActionButtonsRow, !isDesktop && styles.detailActionButtonsRowMobile]}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
-              >
-                {/* Tombol Ambil Alih (CS): mengubah status menjadi 'open' */}
-                {selectedConversation.status !== 'open' && selectedConversation.status !== 'resolved' && (
-                  <TouchableOpacity
-                    style={styles.btnTakeOver}
-                    onPress={() => handleUpdateStatus('open')}
-                    activeOpacity={0.8}
-                  >
-                    <Text style={styles.btnTakeOverText}>Ambil Alih (CS)</Text>
-                  </TouchableOpacity>
-                )}
-
-                {/* Tombol Tandai Selesai: mengubah status menjadi 'resolved' */}
+            {/* Action Buttons: Status Transition */}
+            {!isDesktop ? (
+              <View style={styles.detailActionButtonsRowMobile}>
+                {/* Tombol Selesai / Buka Kembali */}
                 {selectedConversation.status !== 'resolved' ? (
                   <TouchableOpacity
-                    style={styles.btnResolve}
+                    style={styles.btnResolveMobile}
                     onPress={() => handleUpdateStatus('resolved')}
                     activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Tandai Selesai"
                   >
-                    <Text style={styles.btnResolveText}>Tandai Selesai</Text>
+                    <AppIcon name="check" size={13} color="#047857" />
+                    <Text style={styles.btnResolveMobileText}>Selesai</Text>
                   </TouchableOpacity>
                 ) : (
-                  /* Tombol Buka Kembali: mengaktifkan kembali percakapan menjadi 'open' */
                   <TouchableOpacity
-                    style={styles.btnReopen}
+                    style={styles.btnReopenMobile}
                     onPress={() => handleUpdateStatus('open')}
                     activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Buka Kembali"
                   >
-                    <Text style={styles.btnReopenText}>Buka Kembali</Text>
+                    <AppIcon name="refresh" size={13} color="#B45309" />
+                    <Text style={styles.btnReopenMobileText}>Buka Kembali</Text>
                   </TouchableOpacity>
                 )}
 
-                {/* Tombol Alihkan ke AI: mengubah status menjadi 'pending' (menunggu bot / tindak lanjut) */}
-                {selectedConversation.status !== 'pending' && selectedConversation.status !== 'resolved' && (
+                {/* Tombol Alihkan ke AI / Ambil Alih */}
+                {selectedConversation.status !== 'pending' ? (
                   <TouchableOpacity
-                    style={styles.btnSwitchAi}
+                    style={styles.btnSwitchAiMobile}
                     onPress={() => handleUpdateStatus('pending')}
                     activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Alihkan ke AI"
                   >
-                    <Text style={styles.btnSwitchAiText}>Alihkan ke AI</Text>
+                    <Text style={{ fontSize: 13, marginRight: 2 }}>✨</Text>
+                    <Text style={styles.btnSwitchAiMobileText}>Alihkan ke AI</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.btnTakeOverMobile}
+                    onPress={() => handleUpdateStatus('open')}
+                    activeOpacity={0.8}
+                    accessibilityRole="button"
+                    accessibilityLabel="Ambil Alih"
+                  >
+                    <AppIcon name="user" size={13} color="#4338CA" />
+                    <Text style={styles.btnTakeOverMobileText}>Ambil Alih</Text>
                   </TouchableOpacity>
                 )}
 
                 {/* Tombol Hapus Percakapan */}
                 <TouchableOpacity
-                  style={styles.btnDeleteDetail}
+                  style={styles.btnDeleteDetailMobile}
                   onPress={() => handleOpenDeleteDialog(selectedConversation)}
                   activeOpacity={0.8}
-                  accessibilityLabel="Hapus percakapan ini"
+                  accessibilityRole="button"
+                  accessibilityLabel="Hapus"
                 >
-                  <AppIcon name="trash" size={12} color="#DC2626" />
-                  <Text style={styles.btnDeleteDetailText}>Hapus</Text>
+                  <AppIcon name="trash" size={13} color="#DC2626" />
+                  <Text style={styles.btnDeleteDetailMobileText}>Hapus</Text>
                 </TouchableOpacity>
-              </ScrollView>
-            </View>
+              </View>
+            ) : (
+              <View style={styles.detailActionButtonsRow}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+                >
+                  {selectedConversation.status !== 'open' && selectedConversation.status !== 'resolved' && (
+                    <TouchableOpacity
+                      style={styles.btnTakeOver}
+                      onPress={() => handleUpdateStatus('open')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.btnTakeOverText}>Ambil Alih (CS)</Text>
+                    </TouchableOpacity>
+                  )}
+                  {selectedConversation.status !== 'resolved' ? (
+                    <TouchableOpacity
+                      style={styles.btnResolve}
+                      onPress={() => handleUpdateStatus('resolved')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.btnResolveText}>Tandai Selesai</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.btnReopen}
+                      onPress={() => handleUpdateStatus('open')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.btnReopenText}>Buka Kembali</Text>
+                    </TouchableOpacity>
+                  )}
+                  {selectedConversation.status !== 'pending' && selectedConversation.status !== 'resolved' && (
+                    <TouchableOpacity
+                      style={styles.btnSwitchAi}
+                      onPress={() => handleUpdateStatus('pending')}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={styles.btnSwitchAiText}>Alihkan ke AI</Text>
+                    </TouchableOpacity>
+                  )}
+                  <TouchableOpacity
+                    style={styles.btnDeleteDetail}
+                    onPress={() => handleOpenDeleteDialog(selectedConversation)}
+                    activeOpacity={0.8}
+                    accessibilityLabel="Hapus percakapan ini"
+                  >
+                    <AppIcon name="trash" size={12} color="#DC2626" />
+                    <Text style={styles.btnDeleteDetailText}>Hapus</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              </View>
+            )}
           </View>
 
         {/* Status Sinkronisasi WhatsApp & Database */}
         <View style={[styles.disclaimerBar, !isDesktop && styles.disclaimerBarMobile]}>
-          <AppIcon name="check" size={!isDesktop ? 11 : 13} color={COLORS.emerald} />
+          <AppIcon name="check" size={!isDesktop ? 12 : 13} color="#059669" />
           <Text style={[styles.disclaimerText, !isDesktop && styles.disclaimerTextMobile]}>
             {!isDesktop
-              ? 'Tersinkronisasi langsung dengan database Supabase & WhatsApp Staging'
+              ? 'Tersinkronisasi dengan database Supabase & WhatsApp Staging'
               : 'Tersinkronisasi langsung dengan basis data Supabase & Worker WhatsApp Staging. Pesan masuk dan keluar tersimpan secara persisten.'}
           </Text>
         </View>
@@ -1838,7 +1905,8 @@ export function ConversationsView({
                   style={[
                     styles.messageRow,
                     isCustomer && styles.messageRowCustomer,
-                    (isCs || isAi) && styles.messageRowAgent,
+                    isAi && styles.messageRowCustomer, // AI Auto-Reply left-aligned seperti di mockup
+                    isCs && styles.messageRowAgent,
                   ]}
                 >
                   <View
@@ -1851,38 +1919,50 @@ export function ConversationsView({
                     ]}
                   >
                     {/* Header Pengirim */}
-                    <View style={styles.bubbleHeader}>
-                      <Text
-                        style={[
-                          styles.bubbleSenderName,
-                          isCustomer && styles.senderCustomer,
-                          isCs && styles.senderCs,
-                          isAi && styles.senderAi,
-                        ]}
-                      >
-                        {msg.senderName}
+                    {isCustomer && (
+                      <Text style={styles.bubbleCustomerHeader}>
+                        <Text style={{ fontWeight: '700' }}>{msg.senderName}</Text> • {msg.time}
                       </Text>
-                      {isAi && (
-                        <View style={styles.aiTag}>
-                          <Text style={styles.aiTagText}>AUTO-REPLY</Text>
-                        </View>
-                      )}
-                    </View>
+                    )}
+
+                    {isAi && (
+                      <View style={styles.bubbleAiHeader}>
+                        <Text style={{ fontSize: 13 }}>🤖</Text>
+                        <Text style={styles.bubbleAiTitle}>AI WABiz • Auto-Reply</Text>
+                      </View>
+                    )}
+
+                    {isCs && (
+                      <Text style={styles.bubbleCsHeader}>
+                        <Text style={{ fontWeight: '700' }}>{msg.senderName}</Text> • {msg.time}
+                      </Text>
+                    )}
 
                     {/* Isi Pesan Teks */}
-                    <Text style={[styles.bubbleText, !isDesktop && styles.bubbleTextMobile, { color: colors.textPrimary }]}>
+                    <Text
+                      style={[
+                        styles.bubbleText,
+                        !isDesktop && styles.bubbleTextMobile,
+                        isAi && styles.bubbleTextAi,
+                        { color: isAi ? '#1E1B4B' : colors.textPrimary },
+                      ]}
+                    >
                       {msg.text}
                     </Text>
 
                     {/* Waktu & Tanda Centang */}
-                    <View style={styles.bubbleFooter}>
-                      <Text style={[styles.bubbleTime, { color: colors.textMuted }]}>{msg.time}</Text>
-                      {isCs && (
+                    {isAi && (
+                      <Text style={styles.bubbleAiTime}>{msg.time}</Text>
+                    )}
+
+                    {isCs && (
+                      <View style={styles.bubbleFooter}>
+                        <Text style={[styles.bubbleTime, { color: colors.textMuted }]}>{msg.time}</Text>
                         <View style={styles.doubleCheckMark}>
                           <AppIcon name="check" size={11} color={COLORS.emerald} />
                         </View>
-                      )}
-                    </View>
+                      </View>
+                    )}
                   </View>
                 </View>
               );
@@ -1897,7 +1977,11 @@ export function ConversationsView({
             {QUICK_REPLIES.map((qr, index) => (
               <TouchableOpacity
                 key={index}
-                style={[styles.quickReplyPill, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+                style={[
+                  styles.quickReplyPill,
+                  !isDesktop && styles.quickReplyPillMobile,
+                  { backgroundColor: !isDesktop ? (colors.isDark ? '#1E293B' : '#FFFFFF') : colors.surfaceSecondary, borderColor: colors.border },
+                ]}
                 onPress={() => handleApplyQuickReply(qr)}
                 activeOpacity={0.7}
               >
@@ -1943,59 +2027,113 @@ export function ConversationsView({
             </View>
           )}
 
-          <View
-            style={[styles.inputWrapper, !isDesktop && styles.inputWrapperMobile, { backgroundColor: colors.surfaceSecondary, borderColor: colors.borderStrong }]}
-            // @ts-ignore
-            dataSet={{ inputContainer: 'true' }}
-          >
-            <TextInput
-              style={[styles.chatTextInput, { color: colors.textPrimary }]}
-              placeholder="Ketik balasan pesan agen CS..."
-              placeholderTextColor={colors.textPlaceholder}
-              value={inputText}
-              onChangeText={setInputText}
-              multiline
-              editable={!isSending}
+          {/* Baris Input Komposer */}
+          <View style={styles.composerMainRow}>
+            {!isDesktop && (
+              <View style={styles.composerLeftIconsRow}>
+                <TouchableOpacity
+                  style={styles.composerIconBtn}
+                  activeOpacity={0.7}
+                  accessibilityLabel="Tambah berkas"
+                >
+                  <AppIcon name="plus" size={19} color="#64748B" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.composerIconBtn}
+                  activeOpacity={0.7}
+                  accessibilityLabel="Lampiran"
+                >
+                  <AppIcon name="link" size={18} color="#64748B" />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.composerIconBtn}
+                  activeOpacity={0.7}
+                  accessibilityLabel="Pilih Emoji"
+                >
+                  <Text style={{ fontSize: 18 }}>😊</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <View
+              style={[
+                styles.inputWrapper,
+                !isDesktop && styles.inputWrapperMobile,
+                { backgroundColor: !isDesktop ? (colors.isDark ? '#0F172A' : '#FFFFFF') : colors.surfaceSecondary, borderColor: colors.borderStrong },
+              ]}
               // @ts-ignore
-              dataSet={{ embedded: 'true' }}
-              onKeyPress={(e: any) => {
-                if (Platform.OS === 'web' && e.nativeEvent?.key === 'Enter' && !e.nativeEvent?.shiftKey) {
-                  e.preventDefault();
+              dataSet={{ inputContainer: 'true' }}
+            >
+              <TextInput
+                style={[styles.chatTextInput, { color: colors.textPrimary }]}
+                placeholder="Ketik balasan pesan agen CS..."
+                placeholderTextColor={colors.textPlaceholder}
+                value={inputText}
+                onChangeText={setInputText}
+                multiline
+                editable={!isSending}
+                // @ts-ignore
+                dataSet={{ embedded: 'true' }}
+                onKeyPress={(e: any) => {
+                  if (Platform.OS === 'web' && e.nativeEvent?.key === 'Enter' && !e.nativeEvent?.shiftKey) {
+                    e.preventDefault();
+                    if (inputText.trim().length > 0 && !isSending) {
+                      void handleSendMessage();
+                    }
+                  }
+                }}
+                onSubmitEditing={() => {
                   if (inputText.trim().length > 0 && !isSending) {
                     void handleSendMessage();
                   }
-                }
-              }}
-              onSubmitEditing={() => {
-                if (inputText.trim().length > 0 && !isSending) {
-                  void handleSendMessage();
-                }
-              }}
-            />
-            <TouchableOpacity
-              style={[
-                styles.btnSend,
-                !isDesktop && styles.btnSendMobile,
-                (inputText.trim().length === 0 || isSending) && styles.btnSendDisabled,
-              ]}
-              onPress={() => handleSendMessage()}
-              disabled={inputText.trim().length === 0 || isSending}
-              activeOpacity={0.8}
-              accessibilityLabel="Kirim pesan balasan ke WhatsApp"
-            >
-              {isSending ? (
-                <>
-                  <ActivityIndicator size="small" color="#FFFFFF" />
-                  {isDesktop && <Text style={styles.btnSendText}>Mengirim...</Text>}
-                </>
-              ) : (
-                <>
-                  <AppIcon name="send" size={14} color="#FFFFFF" />
-                  {isDesktop && <Text style={styles.btnSendText}>Kirim</Text>}
-                </>
+                }}
+              />
+              {isDesktop && (
+                <TouchableOpacity
+                  style={[
+                    styles.btnSend,
+                    (inputText.trim().length === 0 || isSending) && styles.btnSendDisabled,
+                  ]}
+                  onPress={() => handleSendMessage()}
+                  disabled={inputText.trim().length === 0 || isSending}
+                  activeOpacity={0.8}
+                  accessibilityLabel="Kirim pesan balasan ke WhatsApp"
+                >
+                  {isSending ? (
+                    <>
+                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <Text style={styles.btnSendText}>Mengirim...</Text>
+                    </>
+                  ) : (
+                    <>
+                      <AppIcon name="send" size={14} color="#FFFFFF" />
+                      <Text style={styles.btnSendText}>Kirim</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
               )}
-            </TouchableOpacity>
+            </View>
+
+            {!isDesktop && (
+              <TouchableOpacity
+                style={[
+                  styles.btnSendMobileNavy,
+                  (inputText.trim().length === 0 || isSending) && styles.btnSendMobileNavyDisabled,
+                ]}
+                onPress={() => handleSendMessage()}
+                disabled={inputText.trim().length === 0 || isSending}
+                activeOpacity={0.8}
+                accessibilityLabel="Kirim pesan balasan ke WhatsApp"
+              >
+                {isSending ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <AppIcon name="send" size={16} color="#FFFFFF" />
+                )}
+              </TouchableOpacity>
+            )}
           </View>
+
           <View style={[styles.inputFooterRow, !isDesktop && styles.inputFooterRowMobile]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
               <View style={styles.statusDotSmall} />
@@ -2819,9 +2957,10 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     backgroundColor: colors.surfaceCard,
   },
   detailHeaderMobile: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    gap: 6,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 8,
+    gap: 10,
     flexDirection: 'column',
     alignItems: 'stretch',
     backgroundColor: colors.surfaceCard,
@@ -2850,14 +2989,10 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     minWidth: 0,
   },
   btnBackMobile: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.surfaceSecondary,
   },
   detailAvatar: {
     width: 38,
@@ -2866,10 +3001,21 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  detailAvatarMobile: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#EA580C',
+  },
   detailAvatarText: {
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 13,
+  },
+  detailAvatarTextMobile: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 15,
   },
   detailNameRow: {
     flexDirection: 'row',
@@ -2883,6 +3029,28 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     fontWeight: '700',
     color: colors.textPrimary,
     flexShrink: 1,
+  },
+  detailCustomerNameMobile: {
+    fontSize: 16.5,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  mobileCustomerStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 2,
+  },
+  mobileCustomerActiveDot: {
+    width: 6.5,
+    height: 6.5,
+    borderRadius: 3.25,
+    backgroundColor: '#10B981',
+  },
+  mobileCustomerActiveText: {
+    fontSize: 12,
+    color: '#10B981',
+    fontWeight: '500',
   },
   tagBadge: {
     backgroundColor: 'rgba(23, 35, 31, 0.06)',
@@ -2910,9 +3078,95 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
   },
   detailActionButtonsRowMobile: {
     width: '100%',
-    gap: 6,
-    justifyContent: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
     paddingTop: 2,
+  },
+  btnResolveMobile: {
+    flex: 1,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: colors.isDark ? 'rgba(5, 150, 105, 0.15)' : '#ECFDF5',
+    borderWidth: 1,
+    borderColor: colors.isDark ? 'rgba(5, 150, 105, 0.4)' : '#A7F3D0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  btnResolveMobileText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.isDark ? '#34D399' : '#047857',
+  },
+  btnReopenMobile: {
+    flex: 1,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: colors.isDark ? 'rgba(245, 158, 11, 0.15)' : '#FEF3C7',
+    borderWidth: 1,
+    borderColor: colors.isDark ? 'rgba(245, 158, 11, 0.4)' : '#FDE68A',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  btnReopenMobileText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.isDark ? '#FCD34D' : '#B45309',
+  },
+  btnSwitchAiMobile: {
+    flex: 1,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: colors.isDark ? 'rgba(124, 58, 237, 0.15)' : '#F5F3FF',
+    borderWidth: 1,
+    borderColor: colors.isDark ? 'rgba(124, 58, 237, 0.4)' : '#DDD6FE',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  btnSwitchAiMobileText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.isDark ? '#C4B5FD' : '#7C3AED',
+  },
+  btnTakeOverMobile: {
+    flex: 1,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: colors.isDark ? 'rgba(67, 56, 202, 0.15)' : '#EEF2FF',
+    borderWidth: 1,
+    borderColor: colors.isDark ? 'rgba(67, 56, 202, 0.4)' : '#C7D2FE',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  btnTakeOverMobileText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.isDark ? '#A5B4FC' : '#4338CA',
+  },
+  btnDeleteDetailMobile: {
+    flex: 1,
+    height: 38,
+    borderRadius: 8,
+    backgroundColor: colors.isDark ? 'rgba(220, 38, 38, 0.15)' : '#FEF2F2',
+    borderWidth: 1,
+    borderColor: colors.isDark ? 'rgba(220, 38, 38, 0.4)' : '#FECACA',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  btnDeleteDetailMobileText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.isDark ? '#F87171' : '#DC2626',
   },
   btnTakeOver: {
     backgroundColor: colors.isDark ? 'rgba(45, 212, 191, 0.15)' : colors.accentSubtle,
@@ -2971,27 +3225,32 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
   disclaimerBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.successBg,
+    backgroundColor: '#D1FAE5',
     borderBottomWidth: 1,
-    borderBottomColor: colors.successBorder,
+    borderBottomColor: '#A7F3D0',
     paddingHorizontal: 14,
     paddingVertical: 7,
     gap: 8,
   },
   disclaimerBarMobile: {
-    paddingHorizontal: 10,
-    paddingVertical: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     gap: 6,
+    backgroundColor: '#D1FAE5',
+    borderBottomWidth: 1,
+    borderBottomColor: '#A7F3D0',
   },
   disclaimerText: {
     fontSize: 11,
-    color: colors.successText,
+    color: '#065F46',
     flex: 1,
     lineHeight: 15,
   },
   disclaimerTextMobile: {
-    fontSize: 10.5,
-    lineHeight: 14,
+    fontSize: 12,
+    color: '#065F46',
+    fontWeight: '500',
+    lineHeight: 16,
   },
 
   // Handoff Status Banners & Tags
@@ -3170,44 +3429,56 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     gap: 4,
   },
   messageBubbleMobile: {
-    maxWidth: '86%',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    borderRadius: 12,
+    maxWidth: '88%',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 16,
   },
   bubbleCustomer: {
-    backgroundColor: colors.isDark ? '#181818' : colors.surfaceCard,
-    borderWidth: 1,
-    borderColor: colors.isDark ? '#303030' : '#CBD5E1',
-    borderTopLeftRadius: 2,
-    ...Platform.select({
-      web: {
-        boxShadow: '0 1px 2px 0 rgba(15, 23, 42, 0.05)',
-      },
-      default: {
-        elevation: 1,
-      },
-    }),
+    backgroundColor: colors.isDark ? '#1E293B' : '#F1F5F9',
+    borderWidth: 0,
+    borderRadius: 16,
   },
   bubbleCs: {
-    backgroundColor: colors.isDark ? '#005C4B' : colors.chatCsBubble,
-    borderWidth: colors.isDark ? 0 : 1,
-    borderColor: colors.accentBorder,
-    borderTopRightRadius: 2,
-    ...Platform.select({
-      web: {
-        boxShadow: '0 1px 2px 0 rgba(13, 148, 136, 0.08)',
-      },
-      default: {
-        elevation: 1,
-      },
-    }),
+    backgroundColor: colors.isDark ? '#005C4B' : '#DCFCE7',
+    borderWidth: 0,
+    borderRadius: 16,
   },
   bubbleAi: {
-    backgroundColor: colors.chatAiBubble,
-    borderWidth: 1,
-    borderColor: COLORS.purpleBorder,
-    borderTopRightRadius: 2,
+    backgroundColor: colors.isDark ? 'rgba(168, 85, 247, 0.15)' : '#F3E8FF',
+    borderWidth: 0,
+    borderRadius: 16,
+  },
+  bubbleCustomerHeader: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  bubbleAiHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  bubbleAiTitle: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#6B21A8',
+  },
+  bubbleTextAi: {
+    color: '#1E1B4B',
+    lineHeight: 21,
+  },
+  bubbleAiTime: {
+    fontSize: 11,
+    color: '#94A3B8',
+    textAlign: 'right',
+    marginTop: 4,
+  },
+  bubbleCsHeader: {
+    fontSize: 12,
+    color: '#047857',
+    marginBottom: 4,
   },
   bubbleHeader: {
     flexDirection: 'row',
@@ -3304,9 +3575,9 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     gap: 8,
   },
   quickRepliesStripMobile: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    gap: 8,
   },
   quickReplyLabel: {
     fontSize: 11,
@@ -3322,9 +3593,46 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     paddingVertical: 4,
     maxWidth: 240,
   },
+  quickReplyPillMobile: {
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    maxWidth: 260,
+  },
   quickReplyText: {
     fontSize: 11,
     color: colors.textPrimary,
+  },
+
+  // Composer Modern Row
+  composerMainRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    width: '100%',
+  },
+  composerLeftIconsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  composerIconBtn: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnSendMobileNavy: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#1E3A8A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnSendMobileNavyDisabled: {
+    backgroundColor: '#94A3B8',
+    opacity: 0.6,
   },
 
   // Input Box

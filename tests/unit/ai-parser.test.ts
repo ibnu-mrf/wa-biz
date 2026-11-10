@@ -12,7 +12,7 @@ const mockProfile = {
   website: 'https://anwaarnnajah.sch.id',
   googleMapsUrl: 'https://maps.google.com/?q=anwaarnnajah',
   institutionType: 'Pondok Pesantren / Madrasah',
-};
+} as any;
 
 const mockRules = {
   isEnabled: true,
@@ -20,14 +20,14 @@ const mockRules = {
   language: 'id_formal' as const,
   fallbackOfferCS: true,
   autoReplyKeywords: ['biaya', 'jadwal', 'pendaftaran'],
-};
+} as any;
 
 const mockEscalation = {
   enabled: true,
   mode: 'instant' as const,
   afterHoursPhone: '6281234567890',
   maxUnansweredMinutes: 5,
-};
+} as any;
 
 describe('Unit: General Conversational AI & Linear Parsers (server/src/ai.ts)', () => {
   it('Keamanan Finansial: Menolak memberikan nomor rekening bank sembarangan', () => {

@@ -68,7 +68,7 @@ export function loadConfig(): WorkerConfig {
     'http://127.0.0.1:19006',
   ];
   const customOrigins = process.env.ALLOWED_ORIGINS
-    ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+    ? process.env.ALLOWED_ORIGINS.split(',').map((o: string) => o.trim()).filter(Boolean)
     : [];
   const allowedOrigins = Array.from(new Set([...defaultOrigins, ...customOrigins]));
 
