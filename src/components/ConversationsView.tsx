@@ -1606,7 +1606,7 @@ export function ConversationsView({
           {/* Detail Header: Customer identity & Status actions */}
           <View style={[styles.detailHeader, !isDesktop && styles.detailHeaderMobile, { backgroundColor: colors.surfaceCard, borderBottomColor: colors.border }]}>
             <View style={[styles.detailHeaderTopRow, !isDesktop && styles.detailHeaderTopRowMobile]}>
-              <View style={styles.detailHeaderCustomer}>
+              <View style={[styles.detailHeaderCustomer, !isDesktop && styles.detailHeaderCustomerMobile]}>
                 {!isDesktop && (
                   <TouchableOpacity
                     style={styles.btnBackMobile}
@@ -1615,7 +1615,7 @@ export function ConversationsView({
                     accessibilityLabel="Kembali ke Daftar"
                     accessibilityRole="button"
                   >
-                    <AppIcon name="arrow-left" size={20} color={colors.textPrimary} />
+                    <AppIcon name="arrow-left" size={22} color={colors.isDark ? '#FFFFFF' : '#0F172A'} />
                   </TouchableOpacity>
                 )}
 
@@ -1623,14 +1623,14 @@ export function ConversationsView({
                   <Text style={[styles.detailAvatarText, !isDesktop && styles.detailAvatarTextMobile]}>{selectedConversation.avatarText}</Text>
                 </View>
 
-                <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
+                <View style={[styles.customerInfoBlock, !isDesktop && styles.customerInfoBlockMobile]}>
                   <View style={styles.detailNameRow}>
                     <Text
-                      style={[styles.detailCustomerName, !isDesktop && styles.detailCustomerNameMobile, { color: colors.textPrimary }]}
+                      style={[styles.detailCustomerName, !isDesktop && styles.detailCustomerNameMobile, { color: colors.isDark ? '#FFFFFF' : '#0F172A' }]}
                       numberOfLines={1}
                       ellipsizeMode="tail"
                     >
-                      {selectedConversation.name}
+                      {selectedConversation.name || 'Pelanggan'}
                     </Text>
                     {isDesktop && !!selectedConversation.tag && (
                       <View style={styles.tagBadge}>
@@ -2957,9 +2957,9 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     backgroundColor: colors.surfaceCard,
   },
   detailHeaderMobile: {
-    paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 8,
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'android' ? 12 : 10,
+    paddingBottom: 10,
     gap: 10,
     flexDirection: 'column',
     alignItems: 'stretch',
@@ -2978,8 +2978,7 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
+    justifyContent: 'flex-start',
   },
   detailHeaderCustomer: {
     flexDirection: 'row',
@@ -2988,11 +2987,19 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     flex: 1,
     minWidth: 0,
   },
+  detailHeaderCustomerMobile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: 0,
+  },
   btnBackMobile: {
     width: 36,
     height: 36,
     alignItems: 'center',
     justifyContent: 'center',
+    marginRight: 6,
+    flexShrink: 0,
   },
   detailAvatar: {
     width: 38,
@@ -3002,10 +3009,14 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     justifyContent: 'center',
   },
   detailAvatarMobile: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: '#EA580C',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    flexShrink: 0,
   },
   detailAvatarText: {
     color: '#FFFFFF',
@@ -3015,42 +3026,51 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
   detailAvatarTextMobile: {
     color: '#FFFFFF',
     fontWeight: '700',
-    fontSize: 15,
+    fontSize: 16,
+    textAlign: 'center',
+  },
+  customerInfoBlock: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  customerInfoBlockMobile: {
+    flex: 1,
+    justifyContent: 'center',
   },
   detailNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    flexShrink: 1,
-    minWidth: 0,
   },
   detailCustomerName: {
     fontSize: 14.5,
     fontWeight: '700',
     color: colors.textPrimary,
-    flexShrink: 1,
   },
   detailCustomerNameMobile: {
-    fontSize: 16.5,
+    fontSize: 17,
     fontWeight: '700',
-    color: colors.textPrimary,
+    color: colors.isDark ? '#FFFFFF' : '#0F172A',
+    lineHeight: 22,
   },
   mobileCustomerStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
     marginTop: 2,
   },
   mobileCustomerActiveDot: {
-    width: 6.5,
-    height: 6.5,
-    borderRadius: 3.25,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
     backgroundColor: '#10B981',
+    marginRight: 6,
+    flexShrink: 0,
   },
   mobileCustomerActiveText: {
-    fontSize: 12,
+    fontSize: 12.5,
     color: '#10B981',
-    fontWeight: '500',
+    fontWeight: '600',
+    lineHeight: 16,
   },
   tagBadge: {
     backgroundColor: 'rgba(23, 35, 31, 0.06)',
