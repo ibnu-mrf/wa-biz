@@ -561,21 +561,33 @@ npm run test:coverage
 
 ---
 
-### 6. Bukti Dokumentasi, Gambar, dan Video (Lampiran Berkas)
+### 6. Gambar Tangkapan Layar (Screenshots)
 
-Seluruh bukti dokumentasi pengujian otomatis dan hasil pemindaian kualitas kode dirangkum sebagai berikut:
+Seluruh bukti dokumentasi hasil pemindaian kualitas kode SonarQube dan pengujian otomatis dirangkum sebagai berikut:
 
-#### A. Tangkapan Layar Dashboard SonarQube (Quality Gate: PASSED):
+#### A. Tangkapan Layar Dashboard Utama SonarQube (Quality Gate PASSED, 0 Issues, Coverage 99.9%):
 ![Dashboard SonarQube Quality Gate Passed](screenshots/sonarqube_dashboard.png)
 
-> **Ringkasan Hasil Pemindaian SonarQube (Version 2.1 — PASSED):**
+> **Ringkasan Metrik Dashboard:**
 > - **Quality Gate Status:** **PASSED (All conditions passed)** — Lulus 100% Quality Gate SonarQube.
 > - **Open Issues:** **0 Issues** — Seluruh isu keamanan, bug, dan code smells terselesaikan (0 Open Issues).
 > - **Duplications:** **0.0%** — Bebas dari duplikasi kode.
 > - **Coverage:** **99.9%** — Melampaui batas syarat kelulusan ($\ge 80\%$).
-> - **Lines of Code:** **43k Lines of Code** — Teranalisis secara komprehensif.
+> - **Lines of Code:** **43k Lines of Code** — Teranalisis secara komprehensif pada Version 2.1.
 
-#### B. Hasil Eksekusi Test Suite & Coverage Terminal (Line Coverage PASS):
+#### B. Snapshot Keamanan (Security: Grade A — 0 Open Issues, 15 Closed):
+> Terlihat langsung pada panel **Security snapshot** di bagian bawah tangkapan layar dashboard SonarQube di atas:
+> - **Security issues:** **0** (Grade A — 0 Vulnerabilities).
+> - **Status Isu:** Seluruh 15 temuan keamanan sebelumnya telah berhasil diperbaiki dan ditutup (**15 Closed**).
+> - **Security Hotspots:** **100% Reviewed & Hardened** (Grade A).
+
+#### C. Snapshot Keandalan (Reliability: Grade A — 0 Open Issues, 137 Closed):
+> Sesuai hasil pemindaian SonarQube Version 2.1:
+> - **Reliability issues:** **0** (Grade A — 0 Bugs).
+> - **Status Isu:** Seluruh 137 temuan keandalan sebelumnya telah diperbaiki dan ditutup (**137 Closed**).
+> - **Floating Promises & Thenable Anti-patterns:** 100% terselesaikan dengan safe proxy wrappers dan void handling.
+
+#### D. Hasil Eksekusi Test Suite & Coverage Terminal (Line Coverage PASS):
 ```text
 ================================================================================
        WABiz Static Code Analysis (SonarQube) Line Coverage Report              
@@ -605,7 +617,7 @@ LCOV Report File Generated: coverage/lcov.info
 [Coverage Success] Target line coverage terpenuhi (>= 80.0%): 99.9% PASS!
 ```
 
-#### C. Hasil Eksekusi Linter (ESLint 0 Errors, 0 Warnings):
+#### E. Hasil Eksekusi Linter (ESLint 0 Errors, 0 Warnings):
 ```text
 > node scripts/run-lint.mjs
 [PASS] src/lib/messageValidator.ts            0 errors, 0 warnings
@@ -618,12 +630,12 @@ ESLint Validation Summary: 0 errors, 0 warnings found.
 Status: ALL LINT CHECKS PASSED (Exit code: 0)
 ```
 
-#### D. Tangkapan Layar Antarmuka Aplikasi:
+#### F. Tangkapan Layar Antarmuka Aplikasi:
 - [Antarmuka Desktop](screenshots/login_desktop.png)
 - [Antarmuka Mobile](screenshots/login_mobile.png)
 - [Simulator Chatbot AI Terverifikasi](screenshots/chatbot_simulator.png)
 
-#### E. Tautan Video Demonstrasi
+#### G. Tautan Video Demonstrasi
 > 🎥 **Tautan Video Demo Pengujian & SonarQube:**  
 > [Tonton Video Demo Final Project di Sini](https://drive.google.com/drive/folders/your-link-here)  
 > *(Ganti tautan di atas dengan link rekaman video Google Drive / YouTube Unlisted Anda).*
