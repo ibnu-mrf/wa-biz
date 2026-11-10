@@ -640,6 +640,16 @@ Status: ALL LINT CHECKS PASSED (Exit code: 0)
 > [Tonton Video Demo Final Project di Sini](https://drive.google.com/drive/folders/your-link-here)  
 > *(Ganti tautan di atas dengan link rekaman video Google Drive / YouTube Unlisted Anda).*
 
+#### H. Tautan Bukti Implementasi di GitHub:
+- 📄 **Berkas Konfigurasi SonarQube:** [`sonar-project.properties`](https://github.com/ibnu-mrf/wa-biz/blob/main/sonar-project.properties)
+- 📊 **Laporan Coverage (LCOV):** [`coverage/lcov.info`](https://github.com/ibnu-mrf/wa-biz/blob/main/coverage/lcov.info)
+- 🧪 **Unit Test Suite:** [`tests/unit.test.mjs`](https://github.com/ibnu-mrf/wa-biz/blob/main/tests/unit.test.mjs)
+- 🔄 **Integration Test Suite:** [`tests/integration.test.mjs`](https://github.com/ibnu-mrf/wa-biz/blob/main/tests/integration.test.mjs)
+- ⚙️ **Script Generator Coverage:** [`scripts/generate-coverage.mjs`](https://github.com/ibnu-mrf/wa-biz/blob/main/scripts/generate-coverage.mjs)
+- 🔍 **Script ESLint Quality Checker:** [`scripts/run-lint.mjs`](https://github.com/ibnu-mrf/wa-biz/blob/main/scripts/run-lint.mjs)
+- 🖼️ **Tangkapan Layar SonarQube Passed:** [`screenshots/sonarqube_dashboard.png`](https://github.com/ibnu-mrf/wa-biz/blob/main/screenshots/sonarqube_dashboard.png)
+- 🛠️ **Shared Test Helpers (Refactoring Anti-Pattern):** [`server/src/test-offline-helpers.ts`](https://github.com/ibnu-mrf/wa-biz/blob/main/server/src/test-offline-helpers.ts)
+
 ---
 
 # 6. Instalasi dan Menjalankan Proyek
@@ -658,12 +668,10 @@ Perangkat pengembangan membutuhkan:
 ## 6.2 Clone Repository
 
 ```bash
-git clone <URL_REPOSITORY_GITHUB>
+git clone https://github.com/ibnu-mrf/wa-biz.git
 cd wa-biz
 npm install
 ```
-
-Ganti `<URL_REPOSITORY_GITHUB>` dengan URL repositori yang sebenarnya.
 
 ## 6.3 Konfigurasi Environment
 
@@ -712,7 +720,7 @@ Worker perlu tetap aktif selama sesi WhatsApp digunakan. Konfigurasi port, endpo
 
 # 7. Repository GitHub dan Demonstrasi UTS (20 Poin)
 
-**Repository GitHub:** [Masukkan URL Repository WABiz]
+**Repository GitHub:** [https://github.com/ibnu-mrf/wa-biz](https://github.com/ibnu-mrf/wa-biz)
 
 Repositori ini digunakan untuk menyimpan kode sumber, dokumentasi, diagram UML, konfigurasi nonrahasia, dan bukti pengujian proyek.
 
