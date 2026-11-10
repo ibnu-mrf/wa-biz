@@ -641,12 +641,7 @@ Status: ALL LINT CHECKS PASSED (Exit code: 0)
 - [Antarmuka Mobile](screenshots/login_mobile.png)
 - [Simulator Chatbot AI Terverifikasi](screenshots/chatbot_simulator.png)
 
-#### G. Tautan Video Demonstrasi
-> 🎥 **Tautan Video Demo Pengujian & SonarQube:**  
-> [Tonton Video Demo Final Project di Sini](https://drive.google.com/drive/folders/your-link-here)  
-> *(Ganti tautan di atas dengan link rekaman video Google Drive / YouTube Unlisted Anda).*
-
-#### H. Tautan Bukti Implementasi di GitHub:
+#### G. Tautan Bukti Implementasi di GitHub:
 - 📄 **Berkas Konfigurasi SonarQube:** [`sonar-project.properties`](https://github.com/ibnu-mrf/wa-biz/blob/main/sonar-project.properties)
 - 📊 **Laporan Coverage (LCOV):** [`coverage/lcov.info`](https://github.com/ibnu-mrf/wa-biz/blob/main/coverage/lcov.info)
 - 🧪 **Unit Test Suite:** [`tests/unit.test.mjs`](https://github.com/ibnu-mrf/wa-biz/blob/main/tests/unit.test.mjs)
