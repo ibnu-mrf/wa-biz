@@ -37,7 +37,7 @@ function collectSourceFiles(targetDir) {
         traverse(fullPath);
       } else if (entry.isFile() && /\.(ts|tsx)$/.test(entry.name)) {
         if (
-          (!entry.name.startsWith('test-') || entry.name === 'test-offline-helpers.ts') &&
+          !entry.name.startsWith('test-') &&
           !entry.name.endsWith('.test.ts') &&
           !entry.name.endsWith('.spec.ts') &&
           !entry.name.endsWith('.d.ts') &&
