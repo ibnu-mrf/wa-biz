@@ -1601,8 +1601,9 @@ function AppContent() {
 
         {/* AREA KONTEN UTAMA */}
         <View style={[styles.mainContentArea, { backgroundColor: colors.background }]}>
-          {/* HEADER UTAMA */}
-          <View style={[styles.topHeader, !isDesktop && styles.topHeaderMobile, { backgroundColor: colors.headerBg, borderBottomColor: colors.border }]}>
+          {/* HEADER UTAMA (Disembunyikan pada mobile saat membuka thread percakapan agar layar penuh) */}
+          {!( !isDesktop && activeNav === 'chat' && selectedConversationId !== null ) && (
+            <View style={[styles.topHeader, !isDesktop && styles.topHeaderMobile, { backgroundColor: colors.headerBg, borderBottomColor: colors.border }]}>
             <View style={[styles.topHeaderLeft, !isDesktop && styles.topHeaderLeftMobile]}>
               {/* Tombol Hamburger Menu Pada Mobile */}
               {!isDesktop && (
@@ -1766,6 +1767,7 @@ function AppContent() {
               )}
             </View>
           </View>
+          )}
 
           {/* KONTEN HALAMAN */}
           {activeNav === 'chat' ? (
@@ -2682,12 +2684,18 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     paddingTop: 0,
     paddingBottom: 0,
     backgroundColor: colors.background,
+    flex: 1,
+    width: '100%',
+    height: '100%',
   },
   chatViewWrapperMobileDetail: {
     paddingHorizontal: 0,
     paddingTop: 0,
     paddingBottom: 0,
     backgroundColor: colors.background,
+    flex: 1,
+    width: '100%',
+    height: '100%',
   },
   pageContainer: {
     gap: 20,

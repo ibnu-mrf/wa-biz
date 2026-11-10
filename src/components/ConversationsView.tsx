@@ -1299,10 +1299,10 @@ export function ConversationsView({
   const renderConversationList = () => (
     <View style={[styles.listColumn, !isDesktop && styles.listColumnMobile, { backgroundColor: colors.surfaceCard, borderRightColor: colors.border }]}>
       {/* Search & Tombol Percakapan Baru */}
-      <View style={styles.listSearchContainer}>
+      <View style={[styles.listSearchContainer, !isDesktop && styles.listSearchContainerMobile]}>
         <View style={styles.listSearchRow}>
           <View
-            style={[styles.searchBox, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+            style={[styles.searchBox, !isDesktop && styles.searchBoxMobile, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
             // @ts-ignore
             dataSet={{ inputContainer: 'true' }}
           >
@@ -1323,7 +1323,7 @@ export function ConversationsView({
             )}
           </View>
           <TouchableOpacity
-            style={styles.btnNewConversation}
+            style={[styles.btnNewConversation, !isDesktop && styles.btnNewConversationMobile]}
             onPress={handleOpenNewConvModal}
             activeOpacity={0.8}
             accessibilityLabel="Mulai Percakapan Baru"
@@ -1358,7 +1358,7 @@ export function ConversationsView({
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.filterTabsContent}
+          contentContainerStyle={[styles.filterTabsContent, !isDesktop && styles.filterTabsContentMobile]}
           // @ts-ignore
           data-no-scrollbar="true"
         >
@@ -1613,6 +1613,7 @@ export function ConversationsView({
                     onPress={() => setSelectedId(null)}
                     activeOpacity={0.7}
                     accessibilityLabel="Kembali ke Daftar"
+                    accessibilityRole="button"
                   >
                     <AppIcon name="arrow-left" size={17} color={colors.textPrimary} />
                   </TouchableOpacity>
@@ -1622,21 +1623,31 @@ export function ConversationsView({
                   <Text style={styles.detailAvatarText}>{selectedConversation.avatarText}</Text>
                 </View>
 
-                <View style={{ flex: 1, minWidth: 0 }}>
+                <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
                   <View style={styles.detailNameRow}>
-                    <Text style={[styles.detailCustomerName, { color: colors.textPrimary }]} numberOfLines={1}>
+                    <Text
+                      style={[styles.detailCustomerName, { color: colors.textPrimary }]}
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                    >
                       {selectedConversation.name}
                     </Text>
-                    <View style={styles.tagBadge}>
-                      <Text style={styles.tagBadgeText}>{selectedConversation.tag}</Text>
-                    </View>
+                    {!!selectedConversation.tag && (
+                      <View style={styles.tagBadge}>
+                        <Text style={styles.tagBadgeText}>{selectedConversation.tag}</Text>
+                      </View>
+                    )}
                   </View>
-                  <Text style={[styles.detailCustomerPhone, { color: colors.textSecondary }]}>{selectedConversation.phone}</Text>
+                  <Text style={[styles.detailCustomerPhone, { color: colors.textSecondary }]} numberOfLines={1}>
+                    {selectedConversation.phone}
+                  </Text>
                 </View>
               </View>
 
-              {/* Status Badge selalu terlihat jelas di baris atas */}
-              <StatusBadge status={selectedConversation.status} />
+              {/* Status Badge selalu terlihat jelas di baris atas dengan flexShrink: 0 agar tidak terpotong */}
+              <View style={{ flexShrink: 0 }}>
+                <StatusBadge status={selectedConversation.status} />
+              </View>
             </View>
 
             {/* Action Buttons: Status Transition (selalu 'open' | 'pending' | 'resolved') */}
@@ -1703,10 +1714,12 @@ export function ConversationsView({
           </View>
 
         {/* Status Sinkronisasi WhatsApp & Database */}
-        <View style={styles.disclaimerBar}>
-          <AppIcon name="check" size={13} color={COLORS.emerald} />
-          <Text style={styles.disclaimerText}>
-            Tersinkronisasi langsung dengan basis data Supabase & Worker WhatsApp Staging. Pesan masuk dan keluar tersimpan secara persisten.
+        <View style={[styles.disclaimerBar, !isDesktop && styles.disclaimerBarMobile]}>
+          <AppIcon name="check" size={!isDesktop ? 11 : 13} color={COLORS.emerald} />
+          <Text style={[styles.disclaimerText, !isDesktop && styles.disclaimerTextMobile]}>
+            {!isDesktop
+              ? 'Tersinkronisasi langsung dengan database Supabase & WhatsApp Staging'
+              : 'Tersinkronisasi langsung dengan basis data Supabase & Worker WhatsApp Staging. Pesan masuk dan keluar tersimpan secara persisten.'}
           </Text>
         </View>
 
@@ -2277,7 +2290,7 @@ export function ConversationsView({
   // UTAMA: RESPONSIVE SPLIT / SINGLE VIEW
   // ==========================================
   return (
-    <View style={[styles.inboxWrapper, !isDesktop && selectedId !== null && styles.inboxWrapperDetailMobile, { backgroundColor: colors.background }]}>
+    <View style={[styles.inboxWrapper, !isDesktop && styles.inboxWrapperMobile, !isDesktop && selectedId !== null && styles.inboxWrapperDetailMobile, { backgroundColor: colors.background }]}>
       {/* Header Halaman Percakapan: Tampil di desktop */}
       {isDesktop && (
         <View style={styles.pageHeader}>
@@ -2342,8 +2355,17 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     flex: 1,
     gap: 16,
   },
+  inboxWrapperMobile: {
+    gap: 0,
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
   inboxWrapperDetailMobile: {
     gap: 0,
+    flex: 1,
+    width: '100%',
+    height: '100%',
   },
   pageHeader: {
     flexDirection: 'row',
@@ -2427,10 +2449,20 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     flexDirection: 'column',
     minHeight: 0,
     flex: 1,
+    borderRadius: 0,
+    borderWidth: 0,
+    shadowOpacity: 0,
+    elevation: 0,
+    width: '100%',
+    height: '100%',
   },
   inboxContainerMobileDetail: {
     borderRadius: 0,
     borderWidth: 0,
+    shadowOpacity: 0,
+    elevation: 0,
+    width: '100%',
+    height: '100%',
   },
 
   // ----------------------------------------
@@ -2455,6 +2487,13 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
+  listSearchContainerMobile: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.surfaceCard,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
   listSearchRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2471,9 +2510,13 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     paddingHorizontal: 10,
     height: 36,
   },
+  searchBoxMobile: {
+    height: 40,
+    borderRadius: 10,
+  },
   searchInput: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 12.5,
     color: colors.textPrimary,
     marginLeft: 8,
     paddingVertical: 0,
@@ -2492,6 +2535,11 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     paddingHorizontal: 10,
     height: 36,
     gap: 4,
+  },
+  btnNewConversationMobile: {
+    height: 40,
+    borderRadius: 10,
+    paddingHorizontal: 12,
   },
   btnNewConversationText: {
     color: '#FFFFFF',
@@ -2546,16 +2594,22 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
   },
   filterTabsContent: {
     flexDirection: 'row',
-    paddingLeft: 16,
+    paddingLeft: 12,
     paddingRight: 24,
     paddingVertical: 8,
     gap: 8,
     alignItems: 'center',
   },
+  filterTabsContentMobile: {
+    paddingLeft: 12,
+    paddingRight: 28,
+    paddingVertical: 8,
+    gap: 8,
+  },
   filterTabItem: {
-    paddingHorizontal: 12,
+    paddingHorizontal: 13,
     paddingVertical: 6,
-    borderRadius: 6,
+    borderRadius: 20,
     backgroundColor: colors.surfaceSecondary,
     borderWidth: 1,
     borderColor: colors.border,
@@ -2766,10 +2820,13 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
   },
   detailHeaderMobile: {
     paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 8,
+    paddingVertical: 8,
+    gap: 6,
     flexDirection: 'column',
     alignItems: 'stretch',
+    backgroundColor: colors.surfaceCard,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
   detailHeaderTopRow: {
     flexDirection: 'row',
@@ -2780,24 +2837,27 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
   },
   detailHeaderTopRowMobile: {
     width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 8,
   },
   detailHeaderCustomer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
     flex: 1,
     minWidth: 0,
   },
   btnBackMobile: {
-    width: 32,
-    height: 32,
-    borderRadius: 7,
+    width: 34,
+    height: 34,
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 2,
+    backgroundColor: colors.surfaceSecondary,
   },
   detailAvatar: {
     width: 38,
@@ -2815,17 +2875,21 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    flexShrink: 1,
+    minWidth: 0,
   },
   detailCustomerName: {
-    fontSize: 14,
+    fontSize: 14.5,
     fontWeight: '700',
     color: colors.textPrimary,
+    flexShrink: 1,
   },
   tagBadge: {
     backgroundColor: 'rgba(23, 35, 31, 0.06)',
     paddingHorizontal: 6,
     paddingVertical: 1.5,
-    borderRadius: 3,
+    borderRadius: 4,
+    flexShrink: 0,
   },
   tagBadgeText: {
     fontSize: 9,
@@ -2855,7 +2919,7 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.isDark ? 'rgba(45, 212, 191, 0.35)' : colors.accentBorder,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5.5,
     borderRadius: 6,
   },
   btnTakeOverText: {
@@ -2868,7 +2932,7 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.isDark ? '#303030' : colors.borderStrong,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5.5,
     borderRadius: 6,
   },
   btnResolveText: {
@@ -2881,7 +2945,7 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.isDark ? 'rgba(245, 158, 11, 0.35)' : COLORS.warningBorder,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5.5,
     borderRadius: 6,
   },
   btnReopenText: {
@@ -2894,7 +2958,7 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.isDark ? 'rgba(99, 102, 241, 0.35)' : COLORS.purpleBorder,
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 5.5,
     borderRadius: 6,
   },
   btnSwitchAiText: {
@@ -2914,11 +2978,20 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     paddingVertical: 7,
     gap: 8,
   },
+  disclaimerBarMobile: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    gap: 6,
+  },
   disclaimerText: {
     fontSize: 11,
     color: colors.successText,
     flex: 1,
     lineHeight: 15,
+  },
+  disclaimerTextMobile: {
+    fontSize: 10.5,
+    lineHeight: 14,
   },
 
   // Handoff Status Banners & Tags
@@ -3323,9 +3396,10 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     paddingVertical: 4,
   },
   inputWrapperMobile: {
-    borderRadius: 22,
-    paddingHorizontal: 12,
+    borderRadius: 24,
+    paddingHorizontal: 14,
     paddingVertical: 3,
+    minHeight: 44,
   },
   chatTextInput: {
     flex: 1,
@@ -3351,10 +3425,14 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     gap: 6,
   },
   btnSendMobile: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 18,
-    gap: 4,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 0,
   },
   btnSendDisabled: {
     backgroundColor: COLORS.borderStrong,
@@ -3496,6 +3574,7 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     paddingVertical: 2.5,
     borderRadius: 4,
     gap: 5,
+    flexShrink: 0,
   },
   dotWaiting: {
     width: 6,
@@ -3507,6 +3586,7 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: COLORS.warningText,
+    flexShrink: 0,
   },
   badgeHandling: {
     flexDirection: 'row',
@@ -3518,6 +3598,7 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     paddingVertical: 2.5,
     borderRadius: 4,
     gap: 5,
+    flexShrink: 0,
   },
   dotHandling: {
     width: 6,
@@ -3529,6 +3610,7 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     color: colors.textPrimary,
+    flexShrink: 0,
   },
   badgeResolved: {
     flexDirection: 'row',
@@ -3540,11 +3622,13 @@ const createStyles = (colors: ThemePalette) => StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 2.5,
     borderRadius: 4,
+    flexShrink: 0,
   },
   badgeResolvedText: {
     fontSize: 10,
     fontWeight: '600',
     color: colors.textSecondary,
+    flexShrink: 0,
   },
 
   // ----------------------------------------
