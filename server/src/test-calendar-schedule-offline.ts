@@ -475,4 +475,4 @@ async function runTests() {
   }
 }
 
-runTests();
+void runTests();

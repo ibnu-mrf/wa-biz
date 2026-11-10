@@ -24,6 +24,8 @@ import {
   WhatsAppProviderFactory,
 } from './providers';
 import { whatsappService } from './whatsapp';
+import crypto from 'node:crypto';
+import { createThenableProxy } from './test-offline-helpers';
 
 // ====================================================================
 // TEST FRAMEWORK SEDERHANA
@@ -65,7 +67,10 @@ class MockDatabase {
 
   public createClient() {
     return {
-      from: (tableName: string) => new MockQueryBuilder(this, tableName),
+      from: (tableName: string) => {
+        const builder = new MockQueryBuilder(this, tableName);
+        return createThenableProxy(builder, () => builder.execute());
+      },
     };
   }
 }
@@ -206,7 +211,7 @@ class MockQueryBuilder {
     // 1. Handle INSERT
     if (this.insertData) {
       const insertedRows = this.insertData.map((item: any) => {
-        const id = item.id || `id-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const id = item.id || `id-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
         const now = new Date().toISOString();
         const row = {
           id,
@@ -277,11 +282,6 @@ class MockQueryBuilder {
 
     return { data: matching, error: null, count: matching.length };
   }
-
-  // Promise interface untuk awaitable query builder
-  public then(onfulfilled?: (value: any) => any, onrejected?: (reason: any) => any): Promise<any> {
-    return this.execute().then(onfulfilled, onrejected);
-  }
 }
 
 // ====================================================================
@@ -318,7 +318,7 @@ class MockWhatsAppProvider {
       return {
         success: true,
         provider: this.providerType,
-        providerMessageId: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        providerMessageId: `msg-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
         timestamp: new Date().toISOString(),
       };
     } else {
@@ -1208,8 +1208,8 @@ async function runCampaignOfflineTests() {
     mockDb.clear();
 
     const t14OrgId = testOrgId;
-    const initialSchedule = '2026-10-27T10:00:00.000Z';
-    const newSchedule = '2026-10-28T15:00:00.000Z';
+    const initialSchedule = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
+    const newSchedule = new Date(Date.now() + 48 * 3600 * 1000).toISOString();
 
     // 14.1 Penanganan Kegagalan Sinkronisasi Jadwal:
     // Kasus A: Sinkronisasi berhasil (update kampanye dan penerima pending)
@@ -1517,7 +1517,7 @@ async function runCampaignOfflineTests() {
     assert(resSelectedOnly.validRecipients === 2, '15.1: Tepat 2 kontak valid masuk antrean');
     const recs15_1 = mockDb.campaign_recipients.filter((r) => r.campaign_id === resSelectedOnly.campaignId);
     assert(recs15_1.length === 2, '15.1: Hanya 2 penerima terdaftar di tabel');
-    const ids15_1 = recs15_1.map((r) => r.contact_id).sort();
+    const ids15_1 = recs15_1.map((r) => r.contact_id).sort((a: string, b: string) => a.localeCompare(b));
     assert(JSON.stringify(ids15_1) === JSON.stringify(['c1', 'c3']), '15.1: Penerima yang masuk antrean strictly c1 dan c3, c4 tidak diikutkan');
 
     // 15.2: Beberapa kontak dipilih sekaligus & deduplikasi nomor

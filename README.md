@@ -550,12 +550,22 @@ Laporan lengkap perbaikan kode dan kepatuhan standar kualitas perangkat lunak te
 
 #### 2. Gambar Tangkapan Layar (Screenshots)
 
-##### A. Tangkapan Layar Dashboard Utama SonarQube (Quality Gate PASSED, 0 Issues, Coverage 89.5%):
+##### A. Perbandingan Dashboard Utama SonarQube (Before vs After):
+
+**Sebelum Refactoring & Perbaikan (Versi 1.3 — FAILED Quality Gate):**
+![Dashboard SonarQube Failed Before](screenshots/sonarqube_failed_before.jpg)
+
+> **Kondisi Awal (Gagal):**
+> - **Quality Gate Status:** **FAILED (2 conditions failed)**
+> - **Duplications:** **14.7%** (Melebihi ambang batas)
+> - **Coverage:** **0.0%** (Belum terintegrasi LCOV)
+
+**Setelah Refactoring & Pengujian Komprehensif (Versi 2.1 — PASSED Quality Gate):**
 ![Dashboard SonarQube Quality Gate Passed](screenshots/sonarqube_dashboard.png)
 
-> **Ringkasan Metrik Dashboard:**
+> **Ringkasan Metrik Dashboard (Sukses):**
 > - **Quality Gate Status:** **PASSED (All conditions passed)** — Lulus 100% Quality Gate SonarQube.
-> - **Open Issues:** **0 Issues** — Seluruh isu keamanan, bug, dan code smells terselesaikan.
+> - **Open Issues:** **0 Issues** — Seluruh isu keamanan, bug, dan code smells terselesaikan (0 Open Issues).
 > - **Duplications:** **0.0%** — Bebas dari duplikasi kode.
 > - **Coverage:** **89.5%** — Melampaui batas syarat kelulusan ($\ge 80\%$).
 

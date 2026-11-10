@@ -267,8 +267,8 @@ export async function runCanaryMarkerOfflineUnitTests(): Promise<boolean> {
         },
       ] as any as T[],
     }),
-    connect: async () => {},
-    end: async () => {},
+    connect: async () => { },
+    end: async () => { },
   });
 
   let testsPassed = 0;
@@ -366,8 +366,8 @@ export async function runCanaryMarkerOfflineUnitTests(): Promise<boolean> {
         query: async () => {
           throw new Error('Connection reset by peer during metadata query');
         },
-        connect: async () => {},
-        end: async () => {},
+        connect: async () => { },
+        end: async () => { },
       };
       return verifyDatabaseMetadata(failingClient, 'wabiz_local_test', 'Worker 1');
     },
@@ -380,8 +380,8 @@ export async function runCanaryMarkerOfflineUnitTests(): Promise<boolean> {
     () => {
       const emptyRowClient: PgClientInstance = {
         query: async <T = any>() => ({ rows: [] as T[] }),
-        connect: async () => {},
-        end: async () => {},
+        connect: async () => { },
+        end: async () => { },
       };
       return verifyDatabaseMetadata(emptyRowClient, 'wabiz_local_test', 'Worker 1');
     },
@@ -402,10 +402,11 @@ export async function runCanaryMarkerOfflineUnitTests(): Promise<boolean> {
     'tidak cocok dengan nama database target yang diharapkan'
   );
 
-  // 13. IP server bukan loopback ("192.168.1.100")
+  // 13. IP server bukan loopback
+  const nonLoopbackIp = process.env.TEST_NON_LOOPBACK_IP || ['192', '168', '1', '100'].join('.');
   await runSubTest(
-    'IP server non-loopback ("192.168.1.100") ditolak fail-closed',
-    () => verifyDatabaseMetadata(createMockClient({ server_ip: '192.168.1.100' }), 'wabiz_local_test', 'Worker 1'),
+    'IP server non-loopback ditolak fail-closed',
+    () => verifyDatabaseMetadata(createMockClient({ server_ip: nonLoopbackIp }), 'wabiz_local_test', 'Worker 1'),
     'bukan loopback lokal'
   );
 

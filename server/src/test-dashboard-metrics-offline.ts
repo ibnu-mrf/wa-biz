@@ -16,6 +16,7 @@
 // ====================================================================
 
 import { deleteConversation } from './supabase';
+import { createThenableProxy } from './test-offline-helpers';
 
 let totalTests = 0;
 let passedTests = 0;
@@ -67,7 +68,10 @@ class MockDatabase {
 
   public createClient() {
     return {
-      from: (tableName: string) => new MockQueryBuilder(this, tableName),
+      from: (tableName: string) => {
+        const builder = new MockQueryBuilder(this, tableName);
+        return createThenableProxy(builder, () => builder.execute());
+      },
     };
   }
 }
@@ -145,10 +149,6 @@ class MockQueryBuilder {
       count: matched.length,
       error: null,
     };
-  }
-
-  public then(onfulfilled?: (value: any) => any, onrejected?: (reason: any) => any): Promise<any> {
-    return this.execute().then(onfulfilled, onrejected);
   }
 }
 

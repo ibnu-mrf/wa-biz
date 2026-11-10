@@ -52,7 +52,7 @@ async function runTahap5Verification() {
 
   const TARGET_PORT = 4000;
   const testSecret = 'synthetic_test_secret_for_stage_5_verification_32b!';
-  const runId = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+  const runId = Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex');
 
   // Setup Express App persis dengan konfigurasi produksi server/src/index.ts
   const app = express();

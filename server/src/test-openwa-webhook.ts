@@ -54,7 +54,7 @@ async function runWebhookTests() {
   const testSecret = 'openwa_webhook_test_secret_32bytes_hex!';
   const testSessionId = 'e1b4f70d-7515-4f5d-b0ea-93df068732ba';
   const testOrgId = '12cc398e-9c11-4f30-a665-0583f369fd77'; // Valid UUID staging
-  const runId = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+  const runId = Date.now().toString(36) + '_' + crypto.randomBytes(3).toString('hex');
 
   // Injeksi mock hook terisolasi penuh: tidak mengakses Supabase, Gemini, atau WhatsApp nyata
   setOpenWaWebhookTestHooks({

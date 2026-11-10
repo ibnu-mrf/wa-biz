@@ -17,6 +17,7 @@
 // ====================================================================
 
 import { deleteTeamMember } from './supabase';
+import { createThenableProxy } from './test-offline-helpers';
 
 // ====================================================================
 // TEST HARNESS
@@ -60,7 +61,10 @@ class MockDatabase {
 
   public createClient() {
     return {
-      from: (tableName: string) => new MockQueryBuilder(this, tableName),
+      from: (tableName: string) => {
+        const builder = new MockQueryBuilder(this, tableName);
+        return createThenableProxy(builder, () => builder.execute());
+      },
     };
   }
 }
@@ -143,10 +147,6 @@ class MockQueryBuilder {
     // SELECT
     const matched = rows.filter((r) => this.filters.every((f) => f(r)));
     return { data: matched.map((r) => ({ ...r })), error: null };
-  }
-
-  public then(onfulfilled?: (value: any) => any, onrejected?: (reason: any) => any): Promise<any> {
-    return this.execute().then(onfulfilled, onrejected);
   }
 }
 
