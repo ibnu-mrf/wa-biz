@@ -468,9 +468,9 @@ Proses analisis statis (*Static Code Analysis*) terbaru pada SonarQube Server (`
 | Parameter Kualitas / Metrik | Target / Syarat Kelulusan | Nilai Aktual Proyek | Predikat / Rating | Status Evaluasi |
 | :--- | :---: | :---: | :---: | :---: |
 | **Quality Gate Status** | PASSED (Semua kondisi terpenuhi) | **PASSED (All conditions passed)** | **PASSED (Hijau)** | **LULUS** |
-| **Total Open Issues** | 0 Issues | **0 Open Issues** *(152 isu ditutup)* | **Grade A (1.0)** | **LULUS** |
-| **Security Rating** | Grade A (0 Vulnerabilities) | **0 Security Issues** *(15 Closed)* | **Grade A (1.0)** | **LULUS** |
-| **Reliability Rating** | Grade A (0 Bugs) | **0 Reliability Issues** *(137 Closed)* | **Grade A (1.0)** | **LULUS** |
+| **Total Open Issues** | 0 Issues | **0 Open Issues** *(28 isu ditutup: 9 Security & 19 Reliability)* | **Grade A (1.0)** | **LULUS** |
+| **Security Rating** | Grade A (0 Vulnerabilities) | **0 Security Issues** *(9 Closed)* | **Grade A (1.0)** | **LULUS** |
+| **Reliability Rating** | Grade A (0 Bugs) | **0 Reliability Issues** *(19 Closed)* | **Grade A (1.0)** | **LULUS** |
 | **Maintainability Rating** | Grade A (Technical Debt < 5%) | **0 Code Smells** *(Debt Ratio < 5%)* | **Grade A (1.0)** | **LULUS** |
 | **Security Hotspots** | 100% Reviewed | **0 Hotspots Pending (100% Reviewed)** | **Grade A (1.0)** | **LULUS** |
 | **Line Coverage** | $\ge 80.0\%$ (Kriteria Tugas) | **99.9%** *(Target >= 80%)* | **PASS** | **LULUS** |
@@ -536,7 +536,7 @@ Seluruh **13 temuan statis SonarQube** (*Static Code Analysis findings*) lintas 
 | 2 | **Implement Linter (Wajib)** | **PASS (0 Issues)** | `npm run lint` (`scripts/run-lint.mjs`) berjalan sukses dengan **0 Errors & 0 Warnings** (Exit code: 0). Memeriksa kepatuhan konvensi `Number.*` ES2015, ReDoS safety, dan ketiadaan `eval()`. |
 | 3 | **Integration Testing (Opsional)** | **PASS (100%)** | **2 Pipeline Integration Tests** lulus 100% via `npm run test:integration` (`tests/integration.test.mjs`). Menguji alur pipeline *campaign dispatch batch*, isolasi error template kosong, dan agregasi metrik pengiriman pesan. |
 | 4 | **Integrasi dengan Sonarqube (Static Code Analysis) (Wajib)** | **TERPENUHI** | Berkas konfigurasi [`sonar-project.properties`](sonar-project.properties) di root proyek, terhubung dengan server SonarQube lokal `http://localhost:9000` pada project `wabiz` Version 2.1. |
-| 5 | **Penilaian Berdasarkan Kriteria SonarQube (Reliability A, Maintainability A, Security A)** | **GRADE A (0 Issues)** | Dashboard SonarQube mencatat **0 Open Issues** (152 total temuan lama berhasil ditutup: 15 Security & 137 Reliability). Predikat **Security: Grade A**, **Reliability: Grade A**, **Maintainability: Grade A**. |
+| 5 | **Penilaian Berdasarkan Kriteria SonarQube (Reliability A, Maintainability A, Security A)** | **GRADE A (0 Issues)** | Dashboard SonarQube mencatat **0 Open Issues** (seluruh temuan lama berhasil ditutup: 9 Security & 19 Reliability). Predikat **Security: Grade A**, **Reliability: Grade A**, **Maintainability: Grade A**. |
 | 6 | **Implement Coverage ($\ge$ 80%) (Opsional)** | **PASS (99.9%)** | Laporan SonarQube Version 2.1 mencatat **Line Coverage 99.9%** pada seluruh kode proyek via `coverage/lcov.info`, melampaui batas kriteria kelulusan $\ge 80\%$. |
 
 ---
@@ -563,7 +563,7 @@ npm run test:coverage
 
 ### 6. Gambar Tangkapan Layar (Screenshots)
 
-Seluruh bukti dokumentasi hasil pemindaian kualitas kode SonarQube dan pengujian otomatis dirangkum sebagai berikut:
+Seluruh bukti dokumentasi hasil pemindaian kualitas kode SonarQube Version 2.1 dan pengujian otomatis dirangkum sebagai berikut:
 
 #### A. Tangkapan Layar Dashboard Utama SonarQube (Quality Gate PASSED, 0 Issues, Coverage 99.9%):
 ![Dashboard SonarQube Quality Gate Passed](screenshots/sonarqube_dashboard.png)
@@ -575,16 +575,22 @@ Seluruh bukti dokumentasi hasil pemindaian kualitas kode SonarQube dan pengujian
 > - **Coverage:** **99.9%** — Melampaui batas syarat kelulusan ($\ge 80\%$).
 > - **Lines of Code:** **43k Lines of Code** — Teranalisis secara komprehensif pada Version 2.1.
 
-#### B. Snapshot Keamanan (Security: Grade A — 0 Open Issues, 15 Closed):
-> Terlihat langsung pada panel **Security snapshot** di bagian bawah tangkapan layar dashboard SonarQube di atas:
+#### B. Snapshot Keamanan (Security: Grade A — 0 Open Issues, 9 Closed):
+![Security Issues: 0](screenshots/sonarqube_security_issues_0.png)
+![Security Issues Closed: 9](screenshots/sonarqube_security_closed.png)
+
+> **Ringkasan Snapshot Keamanan:**
 > - **Security issues:** **0** (Grade A — 0 Vulnerabilities).
-> - **Status Isu:** Seluruh 15 temuan keamanan sebelumnya telah berhasil diperbaiki dan ditutup (**15 Closed**).
+> - **Security issues closed:** **9 isu ditutup** (MTTR: 10.2 days).
 > - **Security Hotspots:** **100% Reviewed & Hardened** (Grade A).
 
-#### C. Snapshot Keandalan (Reliability: Grade A — 0 Open Issues, 137 Closed):
-> Sesuai hasil pemindaian SonarQube Version 2.1:
+#### C. Snapshot Keandalan (Reliability: Grade A — 0 Open Issues, 19 Closed):
+![Reliability Issues: 0](screenshots/sonarqube_reliability_issues_0.png)
+![Reliability Issues Closed: 19](screenshots/sonarqube_reliability_closed.png)
+
+> **Ringkasan Snapshot Keandalan:**
 > - **Reliability issues:** **0** (Grade A — 0 Bugs).
-> - **Status Isu:** Seluruh 137 temuan keandalan sebelumnya telah diperbaiki dan ditutup (**137 Closed**).
+> - **Reliability issues closed:** **19 isu ditutup** (MTTR: 7.5 days).
 > - **Floating Promises & Thenable Anti-patterns:** 100% terselesaikan dengan safe proxy wrappers dan void handling.
 
 #### D. Hasil Eksekusi Test Suite & Coverage Terminal (Line Coverage PASS):
@@ -647,7 +653,9 @@ Status: ALL LINT CHECKS PASSED (Exit code: 0)
 - 🔄 **Integration Test Suite:** [`tests/integration.test.mjs`](https://github.com/ibnu-mrf/wa-biz/blob/main/tests/integration.test.mjs)
 - ⚙️ **Script Generator Coverage:** [`scripts/generate-coverage.mjs`](https://github.com/ibnu-mrf/wa-biz/blob/main/scripts/generate-coverage.mjs)
 - 🔍 **Script ESLint Quality Checker:** [`scripts/run-lint.mjs`](https://github.com/ibnu-mrf/wa-biz/blob/main/scripts/run-lint.mjs)
-- 🖼️ **Tangkapan Layar SonarQube Passed:** [`screenshots/sonarqube_dashboard.png`](https://github.com/ibnu-mrf/wa-biz/blob/main/screenshots/sonarqube_dashboard.png)
+- 🖼️ **Tangkapan Layar Dashboard SonarQube:** [`screenshots/sonarqube_dashboard.png`](https://github.com/ibnu-mrf/wa-biz/blob/main/screenshots/sonarqube_dashboard.png)
+- 🔒 **Tangkapan Layar Security Snapshot:** [`screenshots/sonarqube_security_issues_0.png`](https://github.com/ibnu-mrf/wa-biz/blob/main/screenshots/sonarqube_security_issues_0.png) & [`screenshots/sonarqube_security_closed.png`](https://github.com/ibnu-mrf/wa-biz/blob/main/screenshots/sonarqube_security_closed.png)
+- 🛡️ **Tangkapan Layar Reliability Snapshot:** [`screenshots/sonarqube_reliability_issues_0.png`](https://github.com/ibnu-mrf/wa-biz/blob/main/screenshots/sonarqube_reliability_issues_0.png) & [`screenshots/sonarqube_reliability_closed.png`](https://github.com/ibnu-mrf/wa-biz/blob/main/screenshots/sonarqube_reliability_closed.png)
 - 🛠️ **Shared Test Helpers (Refactoring Anti-Pattern):** [`server/src/test-offline-helpers.ts`](https://github.com/ibnu-mrf/wa-biz/blob/main/server/src/test-offline-helpers.ts)
 
 ---
