@@ -2,7 +2,7 @@
   "expo": {
     "name": "WABiz",
     "slug": "wa-biz",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "scheme": "wabiz",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -17,17 +17,12 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.ibnumrf.wabiz",
-      "versionCode": 6
+      "versionCode": 7
     },
     "androidStatusBar": {
       "barStyle": "dark-content",
       "backgroundColor": "#FFFFFF",
       "translucent": false
-    },
-    "androidNavigationBar": {
-      "visible": "always",
-      "barStyle": "dark-content",
-      "backgroundColor": "#FFFFFF"
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -43,6 +38,9 @@
       "eas": {
         "projectId": "e9be9537-5607-4553-9a0e-59fdfea225d2"
       }
-    }
+    },
+    "plugins": [
+      "expo-status-bar"
+    ]
   }
 }
