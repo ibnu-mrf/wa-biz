@@ -463,7 +463,7 @@ Sebagai bagian dari jaminan mutu perangkat lunak (*Software Quality Assurance*) 
 
 ### 1. Hasil Akhir Quality Gate SonarQube: PASSED (Hijau)
 
-Proses analisis statis (*Static Code Analysis*) terbaru pada SonarQube Server (`http://localhost:9000`) project **`wabiz` Version 2.1** menghasilkan status **PASSED (All conditions passed)** secara menyeluruh tanpa error maupun warning, dengan ringkasan metrik evaluasi sebagai berikut:
+Proses analisis statis (*Static Code Analysis*) terbaru pada SonarQube Server (`http://localhost:9000`) project **`wabiz`** menghasilkan status **PASSED (All conditions passed)** secara menyeluruh tanpa error maupun warning, dengan ringkasan metrik evaluasi sebagai berikut:
 
 | Parameter Kualitas / Metrik | Target / Syarat Kelulusan | Nilai Aktual Proyek | Predikat / Rating | Status Evaluasi |
 | :--- | :---: | :---: | :---: | :---: |
